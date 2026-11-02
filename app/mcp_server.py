@@ -16,12 +16,22 @@ import json
 PROTOCOL_VERSION = "2025-03-26"
 SERVER_INFO = {"name": "khoj-ai", "version": "0.2.0"}
 
+_ORG_PROP = {
+    "type": "string",
+    "description": (
+        "Optional business (org) id from list_my_corpora. Omit to search "
+        "the user's personal documents."
+    ),
+}
+
 TOOLS = [
     {
         "name": "search_documents",
         "description": (
-            "Search the signed-in user's own uploaded documents in Khoj.ai "
-            "and return a summary plus the most relevant passages."
+            "Search documents in Khoj.ai and return a summary plus the "
+            "most relevant passages. Searches the user's personal uploads, "
+            "or a business corpus when orgId is given (membership is "
+            "verified server-side)."
         ),
         "inputSchema": {
             "type": "object",
@@ -33,13 +43,19 @@ TOOLS = [
                     "maximum": 25,
                     "default": 10,
                 },
+                "orgId": _ORG_PROP,
             },
             "required": ["query"],
         },
     },
     {
         "name": "list_my_documents",
-        "description": "List the documents the signed-in user has uploaded to Khoj.ai.",
+        "description": "List documents in the user's personal corpus, or in a business corpus when orgId is given.",
+        "inputSchema": {"type": "object", "properties": {"orgId": _ORG_PROP}},
+    },
+    {
+        "name": "list_my_corpora",
+        "description": "List the corpora the user can search: their personal corpus plus every business they belong to (with ids for use as orgId).",
         "inputSchema": {"type": "object", "properties": {}},
     },
 ]
@@ -70,9 +86,10 @@ def _format_search(data: dict) -> str:
     return "\n".join(lines).strip() or "No results."
 
 
-def handle_rpc(body, user: dict, run_search, list_documents):
+def handle_rpc(body, user: dict, run_search, list_documents, orgs=None):
     """Handle one JSON-RPC message. Returns a response dict, or None for
-    notifications (which get no reply)."""
+    notifications (which get no reply). run_search / list_documents take an
+    org_id keyword and enforce membership themselves."""
     if not isinstance(body, dict) or "method" not in body:
         return _error(None, -32600, "Invalid request")
     method = body["method"]
@@ -103,18 +120,38 @@ def handle_rpc(body, user: dict, run_search, list_documents):
                 query = (args.get("query") or "").strip()
                 if not query:
                     raise ValueError("query is required")
-                data = run_search(query, user, int(args.get("pageSize", 10)))
+                data = run_search(
+                    query, user, int(args.get("pageSize", 10)),
+                    org_id=args.get("orgId") or None,
+                )
                 return _result(req_id, {
                     "content": [{"type": "text", "text": _format_search(data)}],
                     "structuredContent": data,
                     "isError": False,
                 })
             if name == "list_my_documents":
-                docs = list_documents(user)
+                docs = list_documents(user, org_id=args.get("orgId") or None)
                 text = "\n".join(f"- {d['title']}" for d in docs) or "No documents uploaded yet."
                 return _result(req_id, {
                     "content": [{"type": "text", "text": text}],
                     "structuredContent": {"documents": docs},
+                    "isError": False,
+                })
+            if name == "list_my_corpora":
+                if orgs is None:
+                    raise ValueError("Businesses are not available on this server")
+                mine = orgs.list_orgs_for_user(user["uid"])
+                corpora = [{"type": "personal", "name": "My documents"}] + [
+                    {"type": "business", "id": o["id"], "name": o["name"], "role": o["role"]}
+                    for o in mine
+                ]
+                text = "\n".join(
+                    ["- My documents (personal)"]
+                    + [f"- {o['name']} (business, id: {o['id']}, role: {o['role']})" for o in mine]
+                )
+                return _result(req_id, {
+                    "content": [{"type": "text", "text": text}],
+                    "structuredContent": {"corpora": corpora},
                     "isError": False,
                 })
             return _error(req_id, -32602, f"Unknown tool: {name}")

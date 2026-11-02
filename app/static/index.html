@@ -36,7 +36,12 @@
 <main>
   <!-- Auth -->
   <section id="authview" class="card hidden">
+    <div id="orgbrand" class="hidden" style="margin-bottom:10px">
+      <img id="orglogo" alt="" style="max-height:44px; display:none" />
+      <div id="orgtagline" class="muted"></div>
+    </div>
     <h2 id="authtitle">Sign in</h2>
+    <p class="muted">For you: sign up directly and search your own documents. For your business: create an account, then enroll your org and invite your team.</p>
     <input id="email" type="email" placeholder="Email" autocomplete="email" />
     <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
     <div class="err" id="autherr"></div>
@@ -48,6 +53,16 @@
 
   <!-- Search -->
   <section id="searchview" class="hidden">
+    <div id="invitesbox" class="card hidden" style="margin-bottom:16px; border-color: var(--accent)">
+      <h3 style="margin-top:0">You're invited</h3>
+      <div id="inviteslist"></div>
+    </div>
+    <div class="row" style="margin-bottom:12px">
+      <label class="muted" for="corpus">Searching:</label>
+      <select id="corpus" style="padding:10px; border-radius:8px; font-size:15px">
+        <option value="">My documents</option>
+      </select>
+    </div>
     <div id="searchbar">
       <input id="q" type="text" placeholder="Search the documents…" />
       <button id="go">Khoj</button>
@@ -59,13 +74,60 @@
     <!-- Your documents -->
     <div id="uploadbox" class="card" style="margin-top:28px">
       <h3>Your documents</h3>
-      <p class="muted">Documents you upload are private to you — only your searches (and your own agent, below) can see them.</p>
+      <p class="muted">Uploads go to the corpus selected above. Personal uploads are private to you; business uploads are shared with that business's members (owners and admins upload).</p>
       <div class="row">
         <input id="docfile" type="file" />
         <button id="upload">Upload</button>
       </div>
       <div id="uploadstatus" class="muted"></div>
       <div id="doclist" class="muted" style="margin-top:10px"></div>
+    </div>
+
+    <!-- Businesses -->
+    <div id="bizbox" class="card" style="margin-top:20px">
+      <h3>Businesses</h3>
+      <p class="muted">A business has its own shared corpus: owners and admins upload documents, every member can search them.</p>
+      <div class="row">
+        <input id="bizname" type="text" placeholder="New business name" style="margin:0" />
+        <button id="createbiz">Create</button>
+      </div>
+      <div id="bizlist" class="muted" style="margin-top:10px"></div>
+      <div id="memberbox" class="hidden" style="margin-top:14px">
+        <div class="muted" id="membertitle"></div>
+        <div id="memberlist" class="muted" style="margin:6px 0"></div>
+        <div class="row">
+          <input id="memberemail" type="email" placeholder="Existing member's account email" style="margin:0" />
+          <select id="memberrole" style="padding:10px; border-radius:8px">
+            <option value="member">member</option>
+            <option value="admin">admin</option>
+          </select>
+          <button id="addmember" class="secondary">Add member</button>
+        </div>
+        <div id="memberstatus" class="muted"></div>
+
+        <h4 style="margin:18px 0 6px">Invite employees</h4>
+        <div class="row">
+          <input id="inviteemail" type="email" placeholder="Employee email" style="margin:0" />
+          <select id="inviterole" style="padding:10px; border-radius:8px">
+            <option value="member">member</option>
+            <option value="admin">admin</option>
+          </select>
+          <button id="sendinvite" class="secondary">Create invite</button>
+        </div>
+        <div id="invitestatus" class="muted"></div>
+        <div id="pendinginvites" class="muted" style="margin-top:6px"></div>
+
+        <h4 style="margin:18px 0 6px">Branding</h4>
+        <input id="bname" type="text" placeholder="Display name (e.g. Acme Docs)" />
+        <input id="blogo" type="text" placeholder="Logo URL (https://…)" />
+        <input id="btag" type="text" placeholder="Tagline" />
+        <div class="row">
+          <label class="muted">Primary color <input id="bcolor" type="color" value="#4f46e5" /></label>
+          <button id="savebranding" class="secondary">Save branding</button>
+        </div>
+        <div id="brandstatus" class="muted"></div>
+        <div id="brandlink" class="muted" style="margin-top:6px"></div>
+      </div>
     </div>
 
     <!-- MCP: use Khoj inside your own agent -->
@@ -88,6 +150,27 @@ import {
 
 const cfg = await (await fetch("/api/config")).json();
 const auth = getAuth(initializeApp(cfg));
+
+// Branded sign-in (/?org=<slug>) + invite links (/?invite=<token>)
+{
+  const params = new URLSearchParams(location.search);
+  const invite = params.get("invite");
+  if (invite) sessionStorage.setItem("khoj_invite", invite);
+  const slug = params.get("org");
+  if (slug) {
+    const r = await fetch("/api/public/org/" + encodeURIComponent(slug));
+    if (r.ok) {
+      const org = await r.json();
+      const b = org.branding || {};
+      document.title = (b.displayName || org.name) + " — sign in";
+      if (b.primaryColor) document.documentElement.style.setProperty("--accent", b.primaryColor);
+      if (b.logoUrl) { $("orglogo").src = b.logoUrl; $("orglogo").style.display = "block"; }
+      $("orgtagline").textContent = b.tagline || ("Sign in to " + (b.displayName || org.name));
+      $("orgbrand").classList.remove("hidden");
+      document.querySelector(".logo").innerHTML = b.displayName || org.name;
+    }
+  }
+}
 const $ = (id) => document.getElementById(id);
 let signupMode = false;
 
@@ -117,9 +200,196 @@ onAuthStateChanged(auth, async (user) => {
   if (user) {
     $("useremail").textContent = user.email;
     renderMcpConfig();
+    await acceptStashedInvite();
+    await loadOrgs();
     loadDocs();
+    loadInvitesInbox();
   }
 });
+
+async function acceptStashedInvite() {
+  const raw = sessionStorage.getItem("khoj_invite");
+  if (!raw) return;
+  sessionStorage.removeItem("khoj_invite");
+  const [orgId, inviteId, secret] = raw.split(".");
+  if (!orgId || !inviteId) return;
+  const resp = await api("/api/invites/accept", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ orgId, inviteId, secret: secret || null }),
+  });
+  if (resp.ok) {
+    const data = await resp.json();
+    $("invitesbox").classList.remove("hidden");
+    $("inviteslist").innerHTML = `<div>You joined <b>${data.joined.name}</b> as ${data.role}. Select it under "Searching:" to use its documents.</div>`;
+  }
+}
+
+async function loadInvitesInbox() {
+  const resp = await api("/api/invites");
+  if (!resp.ok) return;
+  const invites = (await resp.json()).invites || [];
+  if (!invites.length) { $("invitesbox").classList.add("hidden"); return; }
+  $("invitesbox").classList.remove("hidden");
+  $("inviteslist").innerHTML = invites.map((i) =>
+    `<div class="row" style="justify-content:space-between"><span><b>${i.orgName}</b> invited you as ${i.role}</span>` +
+    `<button class="secondary" data-accept="${i.orgId}:${i.inviteId}">Accept</button></div>`).join("");
+  $("inviteslist").querySelectorAll("[data-accept]").forEach((btn) => {
+    btn.onclick = async () => {
+      const [orgId, inviteId] = btn.dataset.accept.split(":");
+      const r = await api("/api/invites/accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orgId, inviteId }),
+      });
+      if (r.ok) { await loadOrgs(); loadInvitesInbox(); }
+    };
+  });
+}
+
+let myOrgs = [];
+function currentOrg() { return $("corpus").value || null; }
+function selectedOrgObj() { return myOrgs.find((o) => o.id === currentOrg()) || null; }
+
+async function api(path, options = {}) {
+  return fetch(path, { ...options, headers: { Authorization: "Bearer " + (await token()), ...(options.headers || {}) } });
+}
+
+async function loadOrgs() {
+  const resp = await api("/api/orgs");
+  if (!resp.ok) return;
+  myOrgs = (await resp.json()).orgs || [];
+  const sel = $("corpus");
+  const keep = sel.value;
+  sel.innerHTML = `<option value="">My documents</option>` +
+    myOrgs.map((o) => `<option value="${o.id}">${o.name} (business)</option>`).join("");
+  sel.value = myOrgs.some((o) => o.id === keep) ? keep : "";
+  $("bizlist").innerHTML = myOrgs.length
+    ? myOrgs.map((o) => `<div>${o.name} — you are ${o.role}</div>`).join("")
+    : "You don't belong to any business yet — create one above.";
+  refreshMemberBox();
+}
+
+function applyBranding(org) {
+  const b = (org && org.branding) || {};
+  const logo = document.querySelector(".logo");
+  document.documentElement.style.setProperty("--accent", b.primaryColor || "#4f46e5");
+  logo.innerHTML = b.logoUrl
+    ? `<img src="${b.logoUrl}" alt="" style="max-height:34px; vertical-align:middle" />`
+    : (b.displayName ? `${b.displayName}` : `Khoj<span>.ai</span>`);
+}
+
+async function refreshMemberBox() {
+  const org = selectedOrgObj();
+  applyBranding(org);
+  const canManage = org && org.role === "admin";
+  $("memberbox").classList.toggle("hidden", !canManage);
+  if (!canManage) return;
+  $("membertitle").textContent = "Members of " + org.name + ":";
+  const resp = await api(`/api/orgs/${org.id}/members`);
+  if (resp.ok) {
+    const members = (await resp.json()).members || [];
+    const myEmail = $("useremail").textContent;
+    $("memberlist").innerHTML = members.map((m) =>
+      `<div>${m.email} — ${m.role}${m.email !== myEmail ? ` <a href="#" data-remove="${m.uid}">remove</a>` : ""}</div>`).join("");
+    $("memberlist").querySelectorAll("[data-remove]").forEach((a) => {
+      a.onclick = async (e) => {
+        e.preventDefault();
+        await api(`/api/orgs/${org.id}/members/${a.dataset.remove}`, { method: "DELETE" });
+        refreshMemberBox();
+      };
+    });
+  }
+  // Branding form prefill + branded sign-in link
+  const b = org.branding || {};
+  $("bname").value = b.displayName || "";
+  $("blogo").value = b.logoUrl || "";
+  $("btag").value = b.tagline || "";
+  if (b.primaryColor) $("bcolor").value = b.primaryColor;
+  $("brandlink").innerHTML = org.slug
+    ? `Branded sign-in page: <a href="/?org=${org.slug}" target="_blank">${location.origin}/?org=${org.slug}</a>`
+    : "";
+  loadPendingInvites(org);
+}
+
+async function loadPendingInvites(org) {
+  const resp = await api(`/api/orgs/${org.id}/invites`);
+  if (!resp.ok) return;
+  const pending = ((await resp.json()).invites || []).filter((i) => i.status === "pending");
+  $("pendinginvites").innerHTML = pending.length
+    ? "Pending: " + pending.map((i) =>
+        `${i.email} (${i.role}) <a href="#" data-revoke="${i.id}">revoke</a>`).join(" · ")
+    : "No pending invites.";
+  $("pendinginvites").querySelectorAll("[data-revoke]").forEach((a) => {
+    a.onclick = async (e) => {
+      e.preventDefault();
+      await api(`/api/orgs/${org.id}/invites/${a.dataset.revoke}`, { method: "DELETE" });
+      loadPendingInvites(org);
+    };
+  });
+}
+
+$("sendinvite").onclick = async () => {
+  const org = selectedOrgObj();
+  if (!org) return;
+  const resp = await api(`/api/orgs/${org.id}/invites`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: $("inviteemail").value.trim(), role: $("inviterole").value }),
+  });
+  if (!resp.ok) { $("invitestatus").textContent = "Invite failed: " + (await resp.text()); return; }
+  const data = await resp.json();
+  $("invitestatus").innerHTML =
+    `Invite created for ${data.email}. Share this one-time link: <a href="${data.inviteLink}">${data.inviteLink}</a> ` +
+    `<a href="#" id="copylink">copy</a> — or they can just sign up with that email and accept in-app.`;
+  $("copylink").onclick = async (e) => { e.preventDefault(); await navigator.clipboard.writeText(data.inviteLink); };
+  $("inviteemail").value = "";
+  loadPendingInvites(org);
+};
+
+$("savebranding").onclick = async () => {
+  const org = selectedOrgObj();
+  if (!org) return;
+  const resp = await api(`/api/orgs/${org.id}/branding`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      displayName: $("bname").value.trim(),
+      logoUrl: $("blogo").value.trim(),
+      tagline: $("btag").value.trim(),
+      primaryColor: $("bcolor").value,
+    }),
+  });
+  $("brandstatus").textContent = resp.ok ? "Branding saved." : "Save failed: " + (await resp.text());
+  if (resp.ok) await loadOrgs();
+};
+
+$("corpus").onchange = () => { loadDocs(); refreshMemberBox(); };
+
+$("createbiz").onclick = async () => {
+  const name = $("bizname").value.trim();
+  if (!name) return;
+  const resp = await api("/api/orgs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (resp.ok) { $("bizname").value = ""; await loadOrgs(); }
+};
+
+$("addmember").onclick = async () => {
+  const org = selectedOrgObj();
+  if (!org) return;
+  const resp = await api(`/api/orgs/${org.id}/members`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: $("memberemail").value.trim(), role: $("memberrole").value }),
+  });
+  $("memberstatus").textContent = resp.ok
+    ? "Member added."
+    : "Could not add: " + (await resp.text());
+  if (resp.ok) { $("memberemail").value = ""; refreshMemberBox(); }
+};
 
 function mcpConfigJson(tok) {
   return JSON.stringify({ mcpServers: { khoj: {
@@ -137,7 +407,9 @@ $("copymcp").onclick = async () => {
 };
 
 async function loadDocs() {
-  const resp = await fetch("/api/documents", { headers: { Authorization: "Bearer " + (await token()) } });
+  const orgId = currentOrg();
+  const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : "";
+  const resp = await fetch("/api/documents" + qs, { headers: { Authorization: "Bearer " + (await token()) } });
   if (!resp.ok) return;
   const docs = (await resp.json()).documents || [];
   $("doclist").innerHTML = docs.length
@@ -152,7 +424,7 @@ async function doSearch() {
   const resp = await fetch("/api/search", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + (await token()) },
-    body: JSON.stringify({ query: q }),
+    body: JSON.stringify({ query: q, orgId: currentOrg() }),
   });
   if (!resp.ok) { $("searcherr").textContent = "Search failed: " + (await resp.text()); return; }
   const data = await resp.json();
@@ -172,6 +444,8 @@ $("upload").onclick = async () => {
   if (!f) return;
   $("uploadstatus").textContent = "Uploading…";
   const fd = new FormData(); fd.append("file", f);
+  const orgId = currentOrg();
+  if (orgId) fd.append("orgId", orgId);
   const resp = await fetch("/api/upload", {
     method: "POST",
     headers: { Authorization: "Bearer " + (await token()) },
