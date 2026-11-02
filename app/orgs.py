@@ -18,9 +18,16 @@ Firestore layout:
 """
 
 import re
+import time
 
 ROLES = ("admin", "member")
 UPLOAD_ROLES = ("admin",)
+
+# The platform itself is an org: Khoj.ai. Its admins are the super admins
+# for every org and user on the platform (approvals, all conversations,
+# RAG metrics). Seeded by scripts/set_super_admin.py.
+PLATFORM_ORG_ID = "khoj"
+ORG_STATUSES = ("pending", "approved", "rejected")
 
 
 def slugify(name: str) -> str:
@@ -38,11 +45,13 @@ class FirestoreOrgService:
     def create_org(self, name: str, owner: dict) -> dict:
         ref = self.db.collection("orgs").document()
         slug = f"{slugify(name)}-{ref.id[:6].lower()}"
-        ref.set({"name": name, "slug": slug, "createdBy": owner["uid"], "branding": {}})
+        ref.set({"name": name, "slug": slug, "createdBy": owner["uid"],
+                 "branding": {}, "status": "pending"})
         ref.collection("members").document(owner["uid"]).set(
             {"uid": owner["uid"], "email": owner.get("email", ""), "role": "admin"}
         )
-        return {"id": ref.id, "name": name, "slug": slug, "role": "admin", "branding": {}}
+        return {"id": ref.id, "name": name, "slug": slug, "role": "admin",
+                "branding": {}, "status": "pending"}
 
     def get_org(self, org_id: str):
         snap = self._org(org_id).get()
@@ -54,6 +63,8 @@ class FirestoreOrgService:
             "name": d.get("name", ""),
             "slug": d.get("slug", ""),
             "branding": d.get("branding", {}) or {},
+            "status": d.get("status", "approved"),
+            "createdBy": d.get("createdBy", ""),
         }
 
     def get_org_by_slug(self, slug: str):
@@ -92,6 +103,42 @@ class FirestoreOrgService:
 
     def remove_member(self, org_id: str, uid: str) -> None:
         self._org(org_id).collection("members").document(uid).delete()
+
+    # -- platform / status / events -----------------------------------------
+    def ensure_platform_org(self, owner: dict) -> dict:
+        ref = self._org(PLATFORM_ORG_ID)
+        if not ref.get().exists:
+            ref.set({"name": "Khoj.ai", "slug": "khoj", "createdBy": owner["uid"],
+                     "branding": {}, "status": "approved"})
+        ref.collection("members").document(owner["uid"]).set(
+            {"uid": owner["uid"], "email": owner.get("email", ""), "role": "admin"}
+        )
+        return self.get_org(PLATFORM_ORG_ID)
+
+    def list_orgs_by_status(self, status: str) -> list:
+        out = []
+        for snap in self.db.collection("orgs").stream():
+            org = self.get_org(snap.id)
+            if org and org["status"] == status:
+                out.append(org)
+        return out
+
+    def set_org_status(self, org_id: str, status: str) -> None:
+        self._org(org_id).update({"status": status})
+
+    def log_event(self, entry: dict) -> None:
+        doc = dict(entry)
+        doc.setdefault("ts", time.time())
+        self.db.collection("search_logs").add(doc)
+
+    def list_events(self, limit: int = 200) -> list:
+        snaps = (
+            self.db.collection("search_logs")
+            .order_by("ts", direction="DESCENDING")
+            .limit(limit)
+            .get()
+        )
+        return [s.to_dict() for s in snaps]
 
     # -- invites -----------------------------------------------------------
     def create_invite(self, org_id: str, email: str, role: str, invited_by: str, secret_hash: str) -> dict:
@@ -142,6 +189,7 @@ class InMemoryOrgService:
 
     def __init__(self):
         self.orgs = {}
+        self._events = []
         self._seq = 0
 
     def _new_id(self, prefix):
@@ -154,19 +202,23 @@ class InMemoryOrgService:
         self.orgs[org_id] = {
             "name": name,
             "slug": slug,
+            "status": "pending",
             "branding": {},
             "members": {
                 owner["uid"]: {"uid": owner["uid"], "email": owner.get("email", ""), "role": "admin"}
             },
             "invites": {},
         }
-        return {"id": org_id, "name": name, "slug": slug, "role": "admin", "branding": {}}
+        return {"id": org_id, "name": name, "slug": slug, "role": "admin",
+                "branding": {}, "status": "pending"}
 
     def get_org(self, org_id: str):
         org = self.orgs.get(org_id)
         if not org:
             return None
-        return {"id": org_id, "name": org["name"], "slug": org["slug"], "branding": org["branding"]}
+        return {"id": org_id, "name": org["name"], "slug": org["slug"],
+                "branding": org["branding"], "status": org.get("status", "approved"),
+                "createdBy": org.get("createdBy", "")}
 
     def get_org_by_slug(self, slug: str):
         for org_id, org in self.orgs.items():
@@ -200,6 +252,34 @@ class InMemoryOrgService:
 
     def remove_member(self, org_id: str, uid: str) -> None:
         self.orgs.get(org_id, {}).get("members", {}).pop(uid, None)
+
+    def ensure_platform_org(self, owner: dict) -> dict:
+        if PLATFORM_ORG_ID not in self.orgs:
+            self.orgs[PLATFORM_ORG_ID] = {
+                "name": "Khoj.ai", "slug": "khoj", "status": "approved",
+                "branding": {}, "members": {}, "invites": {},
+            }
+        self.orgs[PLATFORM_ORG_ID]["members"][owner["uid"]] = {
+            "uid": owner["uid"], "email": owner.get("email", ""), "role": "admin",
+        }
+        return self.get_org(PLATFORM_ORG_ID)
+
+    def list_orgs_by_status(self, status: str) -> list:
+        return [
+            self.get_org(oid) for oid, o in self.orgs.items()
+            if o.get("status", "approved") == status
+        ]
+
+    def set_org_status(self, org_id: str, status: str) -> None:
+        self.orgs[org_id]["status"] = status
+
+    def log_event(self, entry: dict) -> None:
+        doc = dict(entry)
+        doc.setdefault("ts", time.time())
+        self._events.append(doc)
+
+    def list_events(self, limit: int = 200) -> list:
+        return sorted(self._events, key=lambda e: e["ts"], reverse=True)[:limit]
 
     def create_invite(self, org_id: str, email: str, role: str, invited_by: str, secret_hash: str) -> dict:
         invite_id = self._new_id("inv")

@@ -83,6 +83,17 @@
       <div id="doclist" class="muted" style="margin-top:10px"></div>
     </div>
 
+    <!-- Super admin (platform org admins only) -->
+    <div id="superbox" class="card hidden" style="margin-top:20px; border-color: var(--accent)">
+      <h3 style="margin-top:0">Super Admin — Khoj platform</h3>
+      <div id="supermetrics" class="muted"></div>
+      <h4 style="margin-bottom:6px">Business signup requests</h4>
+      <div id="orgrequests" class="muted"></div>
+      <h4 style="margin-bottom:6px">Recent conversations</h4>
+      <div id="convlogs" style="font-size:14px"></div>
+      <button id="refreshadmin" class="secondary" style="margin-top:10px">Refresh</button>
+    </div>
+
     <!-- Businesses -->
     <div id="bizbox" class="card" style="margin-top:20px">
       <h3>Businesses</h3>
@@ -204,8 +215,58 @@ onAuthStateChanged(auth, async (user) => {
     await loadOrgs();
     loadDocs();
     loadInvitesInbox();
+    loadMe();
   }
 });
+
+async function loadMe() {
+  const resp = await api("/api/me");
+  if (!resp.ok) return;
+  const me = await resp.json();
+  $("superbox").classList.toggle("hidden", !me.superAdmin);
+  if (me.superAdmin) loadAdmin();
+}
+
+async function loadAdmin() {
+  const [m, reqs, logs] = await Promise.all([
+    api("/api/admin/metrics").then((r) => r.json()),
+    api("/api/admin/org-requests").then((r) => r.json()),
+    api("/api/admin/logs?limit=30").then((r) => r.json()),
+  ]);
+  const s = m.searches || {};
+  $("supermetrics").innerHTML =
+    `Businesses: ${m.orgs.approved} approved · ${m.orgs.pending} pending · ${m.orgs.rejected} rejected<br>` +
+    `Searches: ${s.total} total (${s.last7d} in 7d) · ${s.uploads} uploads · ${s.uniqueUsers} users · ` +
+    `avg latency ${s.avgLatencyMs ?? "—"} ms · zero-result rate ${s.zeroResultRate ?? "—"} · via MCP ${s.viaMcp} / web ${s.viaWeb}`;
+  const pending = reqs.orgs || [];
+  $("orgrequests").innerHTML = pending.length
+    ? pending.map((o) =>
+        `<div class="row" style="justify-content:space-between"><span><b>${o.name}</b> (/${o.slug})</span>` +
+        `<span><button class="secondary" data-approve="${o.id}">Approve</button> ` +
+        `<button class="secondary" data-reject="${o.id}">Reject</button></span></div>`).join("")
+    : "No pending requests.";
+  $("orgrequests").querySelectorAll("[data-approve],[data-reject]").forEach((btn) => {
+    btn.onclick = async () => {
+      const decision = btn.dataset.approve ? "approve" : "reject";
+      const id = btn.dataset.approve || btn.dataset.reject;
+      await api(`/api/admin/orgs/${id}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision }),
+      });
+      loadAdmin();
+      loadOrgs();
+    };
+  });
+  $("convlogs").innerHTML = (logs.logs || []).map((e) =>
+    `<div style="padding:8px 0; border-bottom:1px solid #8882">` +
+    `<span class="muted">${new Date(e.ts * 1000).toLocaleString()} · ${e.email || e.uid} · ${e.orgId ? "business" : "personal"} · ${e.source}</span><br>` +
+    (e.kind === "upload"
+      ? `📄 uploaded <b>${e.query}</b>`
+      : `<b>${e.query}</b> → ${e.results} results, ${e.latencyMs} ms${e.summary ? `<br><span class="muted">${e.summary}</span>` : ""}`) +
+    `</div>`).join("") || "No activity yet.";
+}
+$("refreshadmin").onclick = loadAdmin;
 
 async function acceptStashedInvite() {
   const raw = sessionStorage.getItem("khoj_invite");
@@ -265,7 +326,7 @@ async function loadOrgs() {
     myOrgs.map((o) => `<option value="${o.id}">${o.name} (business)</option>`).join("");
   sel.value = myOrgs.some((o) => o.id === keep) ? keep : "";
   $("bizlist").innerHTML = myOrgs.length
-    ? myOrgs.map((o) => `<div>${o.name} — you are ${o.role}</div>`).join("")
+    ? myOrgs.map((o) => `<div>${o.name} — you are ${o.role}${o.status && o.status !== "approved" ? ` · <b>${o.status}</b>` : ""}</div>`).join("")
     : "You don't belong to any business yet — create one above.";
   refreshMemberBox();
 }

@@ -34,7 +34,7 @@ main.gcp_access_token = lambda: "fake-token"
 captured = {}
 
 
-def fake_run_search(query, user, page_size=10, org_id=None):
+def fake_run_search(query, user, page_size=10, org_id=None, source="web"):
     captured["search"] = (query, user["uid"], page_size)
     return {
         "summary": "S.",
@@ -202,12 +202,15 @@ class DocsResp:
 ORG_ID = None  # set below before DocsResp is used
 main.requests.get = lambda *a, **k: DocsResp()
 
-# admin (enroller) creates a business
+# admin (enroller) creates a business - it starts PENDING approval
 r = client.post("/api/orgs", json={"name": "Acme Inc"}, headers=H)
 assert r.status_code == 200, r.text
 org = r.json()
 assert org["role"] == "admin" and org["name"] == "Acme Inc"
+assert org["status"] == "pending", org
 ORG_ID = org["id"]
+# simulate the super-admin approval (the gated flow itself is tested below)
+main._org_service.set_org_status(ORG_ID, "approved")
 
 r = client.get("/api/orgs", headers=H)
 assert [o["id"] for o in r.json()["orgs"]] == [ORG_ID]
@@ -360,6 +363,66 @@ assert r.status_code == 200 and r.json()["branding"]["displayName"] == "Acme Doc
 CURRENT["user"] = {"uid": "member-9", "email": "m@x.com"}
 r = client.put(f"/api/orgs/{ORG_ID}/branding", json={"displayName": "Hijack"}, headers=H)
 assert r.status_code == 403
+CURRENT["user"] = USER
+
+# --- Super admin: org approval gate, conversations, metrics -------------------
+svc = main._org_service
+
+# a fresh org is pending: its corpus is closed, even to its own admin
+CURRENT["user"] = USER
+r = client.post("/api/orgs", json={"name": "Beta LLC"}, headers=H)
+org2 = r.json()
+assert org2["status"] == "pending"
+r = client.post("/api/search", json={"query": "q", "orgId": org2["id"]}, headers=H)
+assert r.status_code == 403, r.text
+# ...but its admin may still set branding while waiting
+r = client.put(f"/api/orgs/{org2['id']}/branding", json={"displayName": "Beta"}, headers=H)
+assert r.status_code == 200
+
+# non-super users cannot touch the admin surface
+CURRENT["user"] = {"uid": "member-9", "email": "m@x.com"}
+for path in ("/api/admin/org-requests", "/api/admin/logs", "/api/admin/metrics"):
+    assert client.get(path, headers=H).status_code == 403, path
+r = client.post(f"/api/admin/orgs/{org2['id']}/decision", json={"decision": "approve"}, headers=H)
+assert r.status_code == 403
+
+# USER becomes super admin via the platform org (Khoj.ai itself)
+svc.ensure_platform_org(USER)
+CURRENT["user"] = USER
+r = client.get("/api/me", headers=H)
+assert r.json()["superAdmin"] is True
+r = client.get("/api/admin/org-requests", headers=H)
+assert [o["id"] for o in r.json()["orgs"]] == [org2["id"]], r.json()
+
+# approve -> the corpus opens
+r = client.post(f"/api/admin/orgs/{org2['id']}/decision", json={"decision": "approve"}, headers=H)
+assert r.status_code == 200 and r.json()["status"] == "approved"
+r = client.post("/api/search", json={"query": "beta pricing", "orgId": org2["id"]}, headers=H)
+assert r.status_code == 200, r.text
+
+# reject path: org3 belongs to emp-1; after rejection ITS OWN admin is
+# blocked (the super admin keeps an inspection bypass by design)
+CURRENT["user"] = {"uid": "emp-1", "email": "emp@x.com"}
+r = client.post("/api/orgs", json={"name": "Gamma LLC"}, headers=H)
+org3 = r.json()
+CURRENT["user"] = USER
+r = client.post(f"/api/admin/orgs/{org3['id']}/decision", json={"decision": "reject"}, headers=H)
+assert r.json()["status"] == "rejected"
+CURRENT["user"] = {"uid": "emp-1", "email": "emp@x.com"}
+r = client.post("/api/search", json={"query": "q", "orgId": org3["id"]}, headers=H)
+assert r.status_code == 403
+CURRENT["user"] = USER
+
+# conversations + metrics: the searches above were logged
+r = client.get("/api/admin/logs?limit=50", headers=H)
+logs = r.json()["logs"]
+assert any(e.get("query") == "beta pricing" and e.get("orgId") == org2["id"] for e in logs), logs[:3]
+assert any(e.get("kind") == "upload" for e in logs)
+r = client.get("/api/admin/metrics", headers=H)
+m = r.json()
+assert m["orgs"]["approved"] >= 2 and m["orgs"]["rejected"] == 1, m["orgs"]
+assert m["searches"]["total"] >= 3 and m["searches"]["uniqueUsers"] >= 1
+assert m["searches"]["zeroResultRate"] == 1.0  # canned backend returns 0 results
 CURRENT["user"] = USER
 
 print("ALL LOCAL TESTS PASSED")

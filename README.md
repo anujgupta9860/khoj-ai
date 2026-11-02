@@ -1,9 +1,29 @@
 # Khoj.ai
 
-Hosted document search with a per-user corpus: users sign up, upload
-**their own documents**, and search only what they uploaded — on the web,
-or from inside **their own agent** via Khoj's MCP server. Built for GCP
-project `innovation-lab-2026`.
+Hosted document search, primarily for organizations, with a direct
+individual path too. Built for GCP project `innovation-lab-2026`.
+
+- **Khoj for businesses (primary):** an org admin enrolls the business,
+  sets its branding, and invites employees by email (in-app accept or a
+  one-time invite link). Admins upload documents into the shared
+  business corpus; every member can search it.
+- **Khoj for individuals (direct):** anyone can sign up directly, upload
+  their own documents, and search only those.
+- Both flavors also work from inside the user's own agent via the MCP
+  server.
+
+Documents carry a scope key in `structData` — `org_id` for a business
+corpus, `user_id` for a personal one — and every search is filtered
+server-side to scopes the verified caller actually belongs to.
+
+- **Platform / super admin:** Khoj.ai itself is the platform org (id
+  `khoj`). Its admins are super admins: org signups start **pending**
+  and a super admin approves or rejects them (a pending org's admin can
+  brand and invite, but its corpus stays closed). Every search and
+  upload is logged (`search_logs`), and the Super Admin panel shows all
+  conversations plus RAG metrics — volume, latency, zero-result rate,
+  MCP vs web split, top corpora. Seed the first super admin with
+  `python3 scripts/set_super_admin.py you@example.com`.
 
 - **Search/index:** Vertex AI Search (Agent Search). Every document is
   imported with `structData.user_id` = the uploader's Firebase uid, and

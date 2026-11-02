@@ -45,7 +45,7 @@ from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.cloud import storage
 
 from .mcp_server import handle_rpc
-from .orgs import ROLES, UPLOAD_ROLES, FirestoreOrgService
+from .orgs import PLATFORM_ORG_ID, ROLES, UPLOAD_ROLES, FirestoreOrgService
 
 PROJECT = os.environ["GCP_PROJECT"]
 ENGINE_ID = os.environ["KHOJ_ENGINE_ID"]
@@ -117,14 +117,49 @@ def org_role(user: dict, org_id: str, allowed=ROLES) -> str:
     return role
 
 
+def is_super_admin(user: dict) -> bool:
+    """Super admins are the admins of the platform org (Khoj.ai itself)."""
+    try:
+        return org_service().membership(user["uid"], PLATFORM_ORG_ID) == "admin"
+    except Exception:
+        return False
+
+
+def require_super_admin(user: dict) -> None:
+    if not is_super_admin(user):
+        raise HTTPException(status_code=403, detail="Super admin only")
+
+
+def org_active(user: dict, org_id: str) -> None:
+    """Org signup is approval-gated: until a super admin approves the
+    org, its corpus is closed (its admin can still brand and invite)."""
+    org = org_service().get_org(org_id)
+    if org and org.get("status") != "approved" and not is_super_admin(user):
+        raise HTTPException(status_code=403, detail="This business is pending approval")
+
+
+def log_event(**entry) -> None:
+    try:
+        org_service().log_event(entry)
+    except Exception:
+        pass  # observability must never break the product path
+
+
 def corpus_filter(user: dict, org_id: str | None) -> str:
     if org_id:
         org_role(user, org_id)  # any member may search the business corpus
+        org_active(user, org_id)
         return f'org_id: ANY("{org_id}")'
     return user_filter(user)
 
 
-def run_search(query: str, user: dict, page_size: int = 10, org_id: str | None = None) -> dict:
+def run_search(
+    query: str,
+    user: dict,
+    page_size: int = 10,
+    org_id: str | None = None,
+    source: str = "web",
+) -> dict:
     url = f"{DE_BASE}/engines/{ENGINE_ID}/servingConfigs/default_search:search"
     payload = {
         "query": query,
@@ -142,6 +177,7 @@ def run_search(query: str, user: dict, page_size: int = 10, org_id: str | None =
             "extractiveContentSpec": {"maxExtractiveAnswerCount": 1},
         },
     }
+    started = time.monotonic()
     resp = requests.post(url, json=payload, headers=_headers(), timeout=30)
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Search backend: {resp.text[:300]}")
@@ -167,16 +203,29 @@ def run_search(query: str, user: dict, page_size: int = 10, org_id: str | None =
                 ],
             }
         )
-    return {
+    out = {
         "summary": data.get("summary", {}).get("summaryText", ""),
         "totalSize": data.get("totalSize", len(results)),
         "results": results,
     }
+    log_event(
+        kind="search",
+        uid=user["uid"],
+        email=user.get("email", ""),
+        orgId=org_id,
+        query=query,
+        summary=out["summary"][:500],
+        results=out["totalSize"],
+        latencyMs=int((time.monotonic() - started) * 1000),
+        source=source,
+    )
+    return out
 
 
 def list_documents(user: dict, org_id: str | None = None) -> list:
     if org_id:
         org_role(user, org_id)
+        org_active(user, org_id)
         key, want = "org_id", org_id
     else:
         key, want = "user_id", user["uid"]
@@ -216,7 +265,11 @@ def config():
 @app.get("/api/me")
 def me(authorization: str | None = Header(default=None)):
     user = require_user(authorization)
-    return {"email": user.get("email"), "admin": bool(user.get("admin"))}
+    return {
+        "email": user.get("email"),
+        "admin": bool(user.get("admin")),
+        "superAdmin": is_super_admin(user),
+    }
 
 
 @app.post("/api/search")
@@ -455,6 +508,7 @@ def upload(
     )
     if orgId:
         org_role(user, orgId, allowed=UPLOAD_ROLES)
+        org_active(user, orgId)
         scope = f"orgs/{orgId}"
         struct = {"org_id": orgId, "uploaded_by": user["uid"], "title": filename}
     else:
@@ -490,6 +544,16 @@ def upload(
     resp = requests.post(import_url, json=payload, headers=_headers(), timeout=30)
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Import trigger: {resp.text[:300]}")
+    log_event(
+        kind="upload",
+        uid=user["uid"],
+        email=user.get("email", ""),
+        orgId=orgId,
+        query=filename,
+        results=None,
+        latencyMs=None,
+        source="web",
+    )
     return JSONResponse(
         {
             "uploaded": filename,
@@ -502,6 +566,80 @@ def upload(
 
 # Backward-compatible alias for the first UI revision (admin upload).
 app.post("/api/admin/upload")(upload)
+
+
+# --- Super admin (platform org) -------------------------------------------------
+
+class DecisionBody(BaseModel):
+    decision: str  # "approve" | "reject"
+
+
+@app.get("/api/admin/org-requests")
+def org_requests(authorization: str | None = Header(default=None)):
+    user = require_user(authorization)
+    require_super_admin(user)
+    return {"orgs": org_service().list_orgs_by_status("pending")}
+
+
+@app.post("/api/admin/orgs/{org_id}/decision")
+def org_decision(org_id: str, body: DecisionBody, authorization: str | None = Header(default=None)):
+    user = require_user(authorization)
+    require_super_admin(user)
+    if body.decision not in ("approve", "reject"):
+        raise HTTPException(status_code=422, detail="decision must be approve or reject")
+    svc = org_service()
+    if svc.get_org(org_id) is None:
+        raise HTTPException(status_code=404, detail="Business not found")
+    svc.set_org_status(org_id, "approved" if body.decision == "approve" else "rejected")
+    return {"orgId": org_id, "status": svc.get_org(org_id)["status"]}
+
+
+@app.get("/api/admin/logs")
+def admin_logs(limit: int = 100, authorization: str | None = Header(default=None)):
+    user = require_user(authorization)
+    require_super_admin(user)
+    return {"logs": org_service().list_events(limit=min(limit, 500))}
+
+
+@app.get("/api/admin/metrics")
+def admin_metrics(authorization: str | None = Header(default=None)):
+    """How the RAG is performing, computed from the search log."""
+    user = require_user(authorization)
+    require_super_admin(user)
+    svc = org_service()
+    events = svc.list_events(limit=1000)
+    searches = [e for e in events if e.get("kind") == "search"]
+    uploads = [e for e in events if e.get("kind") == "upload"]
+    now = time.time()
+    last7 = [e for e in searches if now - e.get("ts", 0) <= 7 * 86400]
+    lat = [e["latencyMs"] for e in searches if e.get("latencyMs") is not None]
+    zero = [e for e in searches if e.get("results") == 0]
+    per_org: dict = {}
+    for e in searches:
+        key = e.get("orgId") or "personal"
+        per_org[key] = per_org.get(key, 0) + 1
+    top = sorted(
+        ({"orgId": k, "searches": v} for k, v in per_org.items()),
+        key=lambda x: -x["searches"],
+    )[:10]
+    return {
+        "orgs": {
+            "pending": len(svc.list_orgs_by_status("pending")),
+            "approved": len(svc.list_orgs_by_status("approved")),
+            "rejected": len(svc.list_orgs_by_status("rejected")),
+        },
+        "searches": {
+            "total": len(searches),
+            "last7d": len(last7),
+            "uploads": len(uploads),
+            "uniqueUsers": len({e.get("uid") for e in searches}),
+            "avgLatencyMs": int(sum(lat) / len(lat)) if lat else None,
+            "zeroResultRate": round(len(zero) / len(searches), 3) if searches else None,
+            "viaMcp": len([e for e in searches if e.get("source") == "mcp"]),
+            "viaWeb": len([e for e in searches if e.get("source") == "web"]),
+        },
+        "topCorpora": top,
+    }
 
 
 @app.post("/mcp")
@@ -519,7 +657,11 @@ async def mcp(request: Request, authorization: str | None = Header(default=None)
         orgs = org_service()
     except Exception:
         orgs = None  # businesses unavailable; personal tools still work
-    response = handle_rpc(body, user, run_search, list_documents, orgs=orgs)
+
+    def mcp_search(query, u, page_size=10, org_id=None):
+        return run_search(query, u, page_size, org_id=org_id, source="mcp")
+
+    response = handle_rpc(body, user, mcp_search, list_documents, orgs=orgs)
     if response is None:  # notification: accepted, no body
         return JSONResponse(status_code=202, content={})
     if "error" in response and response["error"].get("code") == -32601:
