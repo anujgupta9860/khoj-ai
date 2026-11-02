@@ -18,10 +18,36 @@ steps:
     args: [build, -f, deploy/docker/Dockerfile.backend, -t,
            "$_REPO/openrag-backend:$SHORT_SHA", -t, "$_REPO/openrag-backend:latest", .]
 
-  # 3. Fetch cluster credentials into the shared workspace.
+  # 3. Write a static-token kubeconfig into the shared workspace. (The
+  #    kubeconfig from `gcloud get-credentials` shells out to the
+  #    gke-gcloud-auth-plugin binary, which the helm builder image does
+  #    not have - that broke the first deploy. A bearer-token kubeconfig
+  #    works in any image; the token only needs to outlive the build.)
   - name: gcr.io/cloud-builders/gcloud
     entrypoint: bash
-    args: ["-c", "gcloud container clusters get-credentials $_CLUSTER --region $_REGION && cp $$HOME/.kube/config /workspace/kubeconfig"]
+    args:
+      - -c
+      - |
+        EP=$$(gcloud container clusters describe $_CLUSTER --region $_REGION --format='value(endpoint)')
+        CA=$$(gcloud container clusters describe $_CLUSTER --region $_REGION --format='value(masterAuth.clusterCaCertificate)')
+        TOK=$$(gcloud auth print-access-token)
+        cat > /workspace/kubeconfig <<EOF
+        apiVersion: v1
+        kind: Config
+        clusters:
+        - cluster:
+            server: https://$$EP
+            certificate-authority-data: $$CA
+          name: khoj
+        contexts:
+        - context: {cluster: khoj, user: cloudbuild}
+          name: khoj
+        current-context: khoj
+        users:
+        - name: cloudbuild
+          user: {token: $$TOK}
+        EOF
+        echo "kubeconfig written for https://$$EP"
 
   # 4. Deploy the Khoj chart with the new image tag.
   - name: alpine/helm:3.16
@@ -29,6 +55,7 @@ steps:
     args: [upgrade, --install, khoj, ./charts/khoj,
            --set, "image.repository=$_REPO/khoj",
            --set, "image.tag=$SHORT_SHA",
+           --set, "workloadIdentity.gsaEmail=khoj-app@innovation-lab-2026.iam.gserviceaccount.com",
            --wait, --timeout, 5m]
 
 images:
