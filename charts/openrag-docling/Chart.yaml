@@ -1,0 +1,6 @@
+apiVersion: v2
+name: openrag-docling
+description: Docling Serve as a container (replaces the host tmux process)
+type: application
+version: 0.1.0
+appVersion: "latest"

@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opensearch-dashboards
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: opensearch-dashboards }
+  template:
+    metadata:
+      labels: { app: opensearch-dashboards }
+    spec:
+      containers:
+        - name: dashboards
+          image: {{ .Values.image }}
+          ports: [{ containerPort: 5601 }]
+          env:
+            - { name: OPENSEARCH_HOSTS, value: {{ .Values.opensearchHost | quote }} }
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

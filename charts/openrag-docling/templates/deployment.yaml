@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docling
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: docling }
+  template:
+    metadata:
+      labels: { app: docling }
+    spec:
+      containers:
+        - name: docling
+          image: {{ .Values.image }}
+          ports: [{ containerPort: 5001 }]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /health, port: 5001 }
+            initialDelaySeconds: 20
+            periodSeconds: 15

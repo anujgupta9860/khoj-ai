@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openrag-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: openrag-backend }
+  template:
+    metadata:
+      labels: { app: openrag-backend }
+    spec:
+      containers:
+        - name: backend
+          image: {{ .Values.image }}
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: LLM_PROVIDER, value: {{ .Values.llm.provider }} }
+            - { name: LLM_MODEL, value: {{ .Values.llm.model }} }
+            - { name: EMBEDDING_PROVIDER, value: {{ .Values.llm.embeddingProvider }} }
+            - { name: EMBEDDING_MODEL, value: {{ .Values.llm.embeddingModel }} }
+            - { name: OPENSEARCH_URL, value: {{ .Values.opensearchUrl }} }
+            - { name: LANGFLOW_URL, value: {{ .Values.langflowUrl }} }
+            - { name: DOCLING_SERVE_URL, value: {{ .Values.doclingUrl }} }
+            - { name: LANGFLOW_ALLOW_CUSTOM_COMPONENTS, value: "true" }
+            # Single-node OpenSearch expectations (learned on the VM deploy)
+            - { name: OPENSEARCH_EXPECTED_DATA_NODE_COUNT, value: "1" }
+            - { name: OPENSEARCH_EXPECTED_CLUSTER_MANAGER_COUNT, value: "1" }
+            - { name: OPENSEARCH_EXPECTED_COORDINATING_NODE_COUNT, value: "0" }
+            - { name: OPENSEARCH_NODE_COUNT_CHECK_ENABLED, value: "false" }
+          envFrom:
+            - secretRef: { name: openrag-backend-secrets }
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            - { name: documents, mountPath: {{ .Values.persistence.mountPath }} }
+          {{- end }}
+      {{- if .Values.persistence.enabled }}
+      volumes:
+        - name: documents
+          persistentVolumeClaim: { claimName: openrag-documents }
+      {{- end }}

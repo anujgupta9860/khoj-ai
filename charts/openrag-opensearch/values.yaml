@@ -1,0 +1,7 @@
+image: opensearchproject/opensearch:2.19.1
+# Admin password is NOT a value: it syncs from Google Secret Manager
+# (openrag-opensearch-admin-password) via External Secrets Operator.
+storage: 30Gi
+resources:
+  requests: { cpu: "500m", memory: "2Gi" }
+  limits: { cpu: "2", memory: "4Gi" }

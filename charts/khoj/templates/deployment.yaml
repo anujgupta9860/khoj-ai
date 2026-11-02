@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: khoj
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: khoj
+  template:
+    metadata:
+      labels:
+        app: khoj
+    spec:
+      serviceAccountName: khoj
+      containers:
+        - name: khoj
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: GCP_PROJECT
+              value: {{ .Values.gcp.project }}
+            - name: KHOJ_ENGINE_ID
+              value: {{ .Values.gcp.engineId }}
+            - name: KHOJ_DATASTORE_ID
+              value: {{ .Values.gcp.datastoreId }}
+            - name: KHOJ_BUCKET
+              value: {{ .Values.gcp.bucket }}
+            - name: KHOJ_LOCATION
+              value: {{ .Values.gcp.location }}
+            - name: FIREBASE_API_KEY
+              value: {{ .Values.firebase.apiKey }}
+            - name: FIREBASE_AUTH_DOMAIN
+              value: {{ .Values.firebase.authDomain }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /api/config
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10

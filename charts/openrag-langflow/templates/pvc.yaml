@@ -1,0 +1,9 @@
+{{- if .Values.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: langflow-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources: { requests: { storage: {{ .Values.persistence.size }} } }
+{{- end }}

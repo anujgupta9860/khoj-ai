@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: langflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: langflow }
+  template:
+    metadata:
+      labels: { app: langflow }
+    spec:
+      containers:
+        - name: langflow
+          image: {{ .Values.image }}
+          ports: [{ containerPort: 7860 }]
+          env:
+            - { name: LANGFLOW_SUPERUSER, value: {{ .Values.superuser }} }
+            - name: LANGFLOW_SUPERUSER_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: langflow-secrets, key: LANGFLOW_SUPERUSER_PASSWORD }
+            - { name: LANGFLOW_ALLOW_CUSTOM_COMPONENTS, value: "true" }
+            - { name: DOCLING_SERVE_URL, value: {{ .Values.doclingUrl }} }
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            - { name: data, mountPath: {{ .Values.persistence.mountPath }} }
+          {{- end }}
+      {{- if .Values.persistence.enabled }}
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: langflow-data }
+      {{- end }}

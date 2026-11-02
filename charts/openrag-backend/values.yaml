@@ -1,0 +1,19 @@
+# Patched backend image built from deploy/docker/Dockerfile.backend.
+image: us-central1-docker.pkg.dev/innovation-lab-2026/khoj/openrag-backend-patched:0.1.0
+opensearchUrl: https://opensearch:9200
+langflowUrl: http://langflow:7860
+doclingUrl: http://docling:5001
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  embeddingProvider: openai
+  embeddingModel: text-embedding-3-small
+# No secrets in values: credentials sync from Google Secret Manager via
+# External Secrets Operator (templates/externalsecret.yaml).
+persistence:
+  enabled: true
+  size: 10Gi
+  mountPath: /app/openrag-documents
+resources:
+  requests: { cpu: "500m", memory: "1Gi" }
+  limits: { cpu: "2", memory: "4Gi" }

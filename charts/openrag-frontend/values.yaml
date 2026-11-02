@@ -1,0 +1,5 @@
+image: langflowai/openrag-frontend:latest
+backendUrl: http://openrag-backend:8000
+resources:
+  requests: { cpu: "100m", memory: "256Mi" }
+  limits: { cpu: "500m", memory: "512Mi" }

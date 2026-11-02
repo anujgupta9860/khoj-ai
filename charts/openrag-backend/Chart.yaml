@@ -1,0 +1,6 @@
+apiVersion: v2
+name: openrag-backend
+description: OpenRAG backend (patched image - see deploy/docker/Dockerfile.backend)
+type: application
+version: 0.1.0
+appVersion: "0.8.1-patched"

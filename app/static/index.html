@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Khoj.ai — search the documents</title>
+<style>
+  :root { color-scheme: light dark; --accent:#4f46e5; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; }
+  header { display:flex; justify-content:space-between; align-items:center; padding: 14px 20px; border-bottom: 1px solid #8883; }
+  .logo { font-size: 22px; font-weight: 700; } .logo span { color: var(--accent); }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+  .card { border: 1px solid #8883; border-radius: 12px; padding: 20px; }
+  input[type=email], input[type=password], input[type=text] { width: 100%; box-sizing: border-box; padding: 12px; margin: 6px 0 12px; border-radius: 8px; border: 1px solid #8886; font-size: 16px; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 11px 18px; font-size: 15px; cursor: pointer; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .row { display:flex; gap: 10px; align-items:center; }
+  .muted { opacity: .7; font-size: 14px; }
+  .result { padding: 14px 0; border-bottom: 1px solid #8882; }
+  .result h3 { margin: 0 0 4px; font-size: 17px; }
+  .result h3 a { color: var(--accent); text-decoration: none; }
+  .summary { background: #4f46e514; border: 1px solid #4f46e533; border-radius: 12px; padding: 16px; margin: 18px 0; white-space: pre-wrap; }
+  .err { color: #dc2626; min-height: 20px; }
+  .hidden { display: none; }
+  #searchbar { display:flex; gap: 10px; } #searchbar input { margin: 0; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Khoj<span>.ai</span></div>
+  <div id="userbox" class="row hidden">
+    <span id="useremail" class="muted"></span>
+    <button id="signout" class="secondary">Sign out</button>
+  </div>
+</header>
+<main>
+  <!-- Auth -->
+  <section id="authview" class="card hidden">
+    <h2 id="authtitle">Sign in</h2>
+    <input id="email" type="email" placeholder="Email" autocomplete="email" />
+    <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
+    <div class="err" id="autherr"></div>
+    <div class="row">
+      <button id="authsubmit">Sign in</button>
+      <button id="authtoggle" class="secondary">New here? Create account</button>
+    </div>
+  </section>
+
+  <!-- Search -->
+  <section id="searchview" class="hidden">
+    <div id="searchbar">
+      <input id="q" type="text" placeholder="Search the documents…" />
+      <button id="go">Khoj</button>
+    </div>
+    <div class="err" id="searcherr"></div>
+    <div id="summary" class="summary hidden"></div>
+    <div id="results"></div>
+
+    <!-- Admin only -->
+    <div id="adminbox" class="card hidden" style="margin-top:28px">
+      <h3>Admin — add to the global corpus</h3>
+      <p class="muted">Uploaded documents are indexed into the shared corpus for every user.</p>
+      <div class="row">
+        <input id="docfile" type="file" />
+        <button id="upload">Upload</button>
+      </div>
+      <div id="uploadstatus" class="muted"></div>
+    </div>
+  </section>
+</main>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import {
+  getAuth, onAuthStateChanged, signInWithEmailAndPassword,
+  createUserWithEmailAndPassword, signOut
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+
+const cfg = await (await fetch("/api/config")).json();
+const auth = getAuth(initializeApp(cfg));
+const $ = (id) => document.getElementById(id);
+let signupMode = false;
+
+$("authtoggle").onclick = () => {
+  signupMode = !signupMode;
+  $("authtitle").textContent = signupMode ? "Create account" : "Sign in";
+  $("authsubmit").textContent = signupMode ? "Create account" : "Sign in";
+  $("authtoggle").textContent = signupMode ? "Have an account? Sign in" : "New here? Create account";
+  $("autherr").textContent = "";
+};
+$("authsubmit").onclick = async () => {
+  $("autherr").textContent = "";
+  try {
+    if (signupMode) await createUserWithEmailAndPassword(auth, $("email").value, $("password").value);
+    else await signInWithEmailAndPassword(auth, $("email").value, $("password").value);
+  } catch (e) { $("autherr").textContent = e.message; }
+};
+$("signout").onclick = () => signOut(auth);
+
+async function token() { return auth.currentUser ? auth.currentUser.getIdToken() : null; }
+
+onAuthStateChanged(auth, async (user) => {
+  const signedIn = !!user;
+  $("authview").classList.toggle("hidden", signedIn);
+  $("searchview").classList.toggle("hidden", !signedIn);
+  $("userbox").classList.toggle("hidden", !signedIn);
+  if (user) {
+    $("useremail").textContent = user.email;
+    const me = await (await fetch("/api/me", { headers: { Authorization: "Bearer " + (await token()) } })).json();
+    $("adminbox").classList.toggle("hidden", !me.admin);
+  }
+});
+
+async function doSearch() {
+  const q = $("q").value.trim();
+  if (!q) return;
+  $("searcherr").textContent = ""; $("results").innerHTML = ""; $("summary").classList.add("hidden");
+  const resp = await fetch("/api/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + (await token()) },
+    body: JSON.stringify({ query: q }),
+  });
+  if (!resp.ok) { $("searcherr").textContent = "Search failed: " + (await resp.text()); return; }
+  const data = await resp.json();
+  if (data.summary) { $("summary").textContent = data.summary; $("summary").classList.remove("hidden"); }
+  $("results").innerHTML = data.results.map((r) => `
+    <div class="result">
+      <h3>${r.link ? `<a href="${r.link}" target="_blank" rel="noopener">${r.title || "Document"}</a>` : (r.title || "Document")}</h3>
+      ${(r.extractive || []).map((s) => `<div>${s}</div>`).join("")}
+      ${(r.snippets || []).map((s) => `<div class="muted">${s}</div>`).join("")}
+    </div>`).join("") || `<p class="muted">No results.</p>`;
+}
+$("go").onclick = doSearch;
+$("q").addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
+
+$("upload").onclick = async () => {
+  const f = $("docfile").files[0];
+  if (!f) return;
+  $("uploadstatus").textContent = "Uploading…";
+  const fd = new FormData(); fd.append("file", f);
+  const resp = await fetch("/api/admin/upload", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + (await token()) },
+    body: fd,
+  });
+  $("uploadstatus").textContent = resp.ok
+    ? "Uploaded " + f.name + " — indexing started (can take a few minutes)."
+    : "Upload failed: " + (await resp.text());
+};
+</script>
+</body>
+</html>

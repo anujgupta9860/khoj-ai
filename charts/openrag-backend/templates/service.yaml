@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: openrag-backend
+spec:
+  selector: { app: openrag-backend }
+  ports:
+    - { port: 8000, targetPort: 8000 }

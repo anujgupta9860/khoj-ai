@@ -1,0 +1,41 @@
+# Khoj.ai CI/CD: build images -> push to Artifact Registry -> helm upgrade
+# on the GKE Autopilot cluster. Trigger: push to main (Cloud Build GitHub
+# trigger, see docs/deploy-ci.md). The Cloud Build service account needs
+# roles/artifactregistry.writer + roles/container.developer on the project.
+substitutions:
+  _REGION: us-central1
+  _CLUSTER: khoj
+  _REPO: us-central1-docker.pkg.dev/innovation-lab-2026/khoj
+
+steps:
+  # 1. Build the Khoj web service image.
+  - name: gcr.io/cloud-builders/docker
+    args: [build, -t, "$_REPO/khoj:$SHORT_SHA", -t, "$_REPO/khoj:latest", .]
+
+  # 2. Build the patched OpenRAG backend image (agent.py include fix
+  #    applied at build time - see deploy/docker/Dockerfile.backend).
+  - name: gcr.io/cloud-builders/docker
+    args: [build, -f, deploy/docker/Dockerfile.backend, -t,
+           "$_REPO/openrag-backend:$SHORT_SHA", -t, "$_REPO/openrag-backend:latest", .]
+
+  # 3. Fetch cluster credentials into the shared workspace.
+  - name: gcr.io/cloud-builders/gcloud
+    entrypoint: bash
+    args: ["-c", "gcloud container clusters get-credentials $_CLUSTER --region $_REGION && cp $$HOME/.kube/config /workspace/kubeconfig"]
+
+  # 4. Deploy the Khoj chart with the new image tag.
+  - name: alpine/helm:3.16
+    env: ["KUBECONFIG=/workspace/kubeconfig"]
+    args: [upgrade, --install, khoj, ./charts/khoj,
+           --set, "image.repository=$_REPO/khoj",
+           --set, "image.tag=$SHORT_SHA",
+           --wait, --timeout, 5m]
+
+images:
+  - "$_REPO/khoj:$SHORT_SHA"
+  - "$_REPO/khoj:latest"
+  - "$_REPO/openrag-backend:$SHORT_SHA"
+  - "$_REPO/openrag-backend:latest"
+
+options:
+  logging: GCS_ONLY

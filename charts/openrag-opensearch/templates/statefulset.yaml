@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: opensearch
+spec:
+  serviceName: opensearch
+  replicas: 1
+  selector:
+    matchLabels: { app: opensearch }
+  template:
+    metadata:
+      labels: { app: opensearch }
+    spec:
+      containers:
+        - name: opensearch
+          image: {{ .Values.image }}
+          ports: [{ containerPort: 9200 }]
+          env:
+            - { name: discovery.type, value: single-node }
+            - name: OPENSEARCH_INITIAL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: opensearch-secrets, key: OPENSEARCH_INITIAL_ADMIN_PASSWORD }
+            - { name: OPENSEARCH_JAVA_OPTS, value: "-Xms1g -Xmx1g" }
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /usr/share/opensearch/data }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: {{ .Values.storage }} } }

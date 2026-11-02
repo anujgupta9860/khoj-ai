@@ -1,0 +1,40 @@
+image:
+  repository: us-central1-docker.pkg.dev/innovation-lab-2026/khoj/khoj
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+# GCP wiring (no secrets - identity comes from Workload Identity)
+gcp:
+  project: innovation-lab-2026
+  engineId: "khoj-search"                      # Vertex AI Search app (engine) id
+  datastoreId: "khoj-corpus_1793659971762"     # Vertex AI Search data store id
+  bucket: "khoj-ai-corpus-innovation-lab"      # GCS corpus bucket
+  location: global
+
+firebase:
+  apiKey: "AIzaSyBj_VxGuj_iVjrnnjzS2g8S0zRfg4ItYX4"   # Firebase web config (public identifiers)
+  authDomain: "innovation-lab-2026.firebaseapp.com"
+
+workloadIdentity:
+  # Google service account the pods act as (needs discoveryengine viewer +
+  # editor for imports, storage object admin on the bucket, firebase auth)
+  gsaEmail: ""
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  host: ""            # e.g. khoj.example.com; empty = IP-only via LB address
+  staticIpName: ""    # GKE reserved static IP name, optional
+
+resources:
+  requests:
+    cpu: "250m"
+    memory: "512Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<APIProxy name="khoj-api">
+  <Description>Khoj.ai public API front door: CORS + spike protection in
+  front of the GKE-hosted khoj service. Auth stays Firebase (verified by
+  the service itself). See apigee/README.md.</Description>
+  <CreatedAt>2026-11-02</CreatedAt>
+  <Basepaths>/khoj/v1</Basepaths>
+</APIProxy>

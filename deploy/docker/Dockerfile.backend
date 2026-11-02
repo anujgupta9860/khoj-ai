@@ -1,0 +1,8 @@
+# OpenRAG backend with the OpenAI Responses "include" fix baked in.
+# Upstream src/agent.py sends include: ["tool-call.results"] on every
+# Responses API call; the public OpenAI API rejects it (400) and chat
+# 500s. Delete both lines at image build time. Same fix as
+# rag-pocs/openrag-poc/vm-deployment/agent-include-fix.patch.
+FROM langflowai/openrag-backend:latest
+RUN sed -i '/"include": \["tool-call.results"\]/d' /app/src/agent.py \
+ && ! grep -n 'tool-call.results' /app/src/agent.py

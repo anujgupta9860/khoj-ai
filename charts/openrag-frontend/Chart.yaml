@@ -1,0 +1,6 @@
+apiVersion: v2
+name: openrag-frontend
+description: OpenRAG web frontend (back-office POC UI)
+type: application
+version: 0.1.0
+appVersion: "latest"

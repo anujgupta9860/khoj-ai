@@ -1,0 +1,13 @@
+image: langflowai/openrag-langflow:latest
+doclingUrl: http://docling:5001
+superuser: langflow
+# Password is NOT a value: it syncs from Google Secret Manager
+# (openrag-langflow-superuser-password) via External Secrets Operator.
+persistence:
+  enabled: true
+  size: 5Gi
+  # Confirm against the image on first install; upstream keeps its DB here.
+  mountPath: /app/langflow-data
+resources:
+  requests: { cpu: "500m", memory: "1Gi" }
+  limits: { cpu: "2", memory: "4Gi" }
