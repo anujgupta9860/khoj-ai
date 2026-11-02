@@ -2,27 +2,45 @@
 # on the GKE Autopilot cluster. Trigger: push to main (Cloud Build GitHub
 # trigger, see docs/deploy-ci.md). The Cloud Build service account needs
 # roles/artifactregistry.writer + roles/container.developer on the project.
+#
+# NOTE: images are pushed explicitly inside the build steps. Do NOT rely on
+# the top-level `images:` field alone: those pushes happen only when the
+# whole build succeeds, but the helm step below waits for pods that need
+# the images - a deadlock that broke deploy #2 (helm timed out waiting on
+# an ImagePullBackOff pod whose tag was never pushed).
 substitutions:
   _REGION: us-central1
   _CLUSTER: khoj
   _REPO: us-central1-docker.pkg.dev/innovation-lab-2026/khoj
 
 steps:
-  # 1. Build the Khoj web service image.
+  # 1. Build + push the Khoj web service image.
   - name: gcr.io/cloud-builders/docker
-    args: [build, -t, "$_REPO/khoj:$SHORT_SHA", -t, "$_REPO/khoj:latest", .]
+    entrypoint: bash
+    args:
+      - -c
+      - >
+        docker build -t $_REPO/khoj:$SHORT_SHA -t $_REPO/khoj:latest .
+        && docker push $_REPO/khoj:$SHORT_SHA
+        && docker push $_REPO/khoj:latest
 
-  # 2. Build the patched OpenRAG backend image (agent.py include fix
-  #    applied at build time - see deploy/docker/Dockerfile.backend).
+  # 2. Build + push the patched OpenRAG backend image (agent.py include
+  #    fix applied at build time - see deploy/docker/Dockerfile.backend).
   - name: gcr.io/cloud-builders/docker
-    args: [build, -f, deploy/docker/Dockerfile.backend, -t,
-           "$_REPO/openrag-backend:$SHORT_SHA", -t, "$_REPO/openrag-backend:latest", .]
+    entrypoint: bash
+    args:
+      - -c
+      - >
+        docker build -f deploy/docker/Dockerfile.backend
+        -t $_REPO/openrag-backend:$SHORT_SHA -t $_REPO/openrag-backend:latest .
+        && docker push $_REPO/openrag-backend:$SHORT_SHA
+        && docker push $_REPO/openrag-backend:latest
 
   # 3. Write a static-token kubeconfig into the shared workspace. (The
   #    kubeconfig from `gcloud get-credentials` shells out to the
   #    gke-gcloud-auth-plugin binary, which the helm builder image does
-  #    not have - that broke the first deploy. A bearer-token kubeconfig
-  #    works in any image; the token only needs to outlive the build.)
+  #    not have - that broke deploy #1. A bearer-token kubeconfig works
+  #    in any image; the token only needs to outlive the build.)
   - name: gcr.io/cloud-builders/gcloud
     entrypoint: bash
     args:
