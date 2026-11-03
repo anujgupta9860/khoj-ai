@@ -5,24 +5,45 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Khoj.ai — search the documents</title>
 <style>
-  :root { color-scheme: light dark; --accent:#4f46e5; }
-  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; }
-  header { display:flex; justify-content:space-between; align-items:center; padding: 14px 20px; border-bottom: 1px solid #8883; }
-  .logo { font-size: 22px; font-weight: 700; } .logo span { color: var(--accent); }
-  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
-  .card { border: 1px solid #8883; border-radius: 12px; padding: 20px; }
-  input[type=email], input[type=password], input[type=text] { width: 100%; box-sizing: border-box; padding: 12px; margin: 6px 0 12px; border-radius: 8px; border: 1px solid #8886; font-size: 16px; }
-  button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 11px 18px; font-size: 15px; cursor: pointer; }
-  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  :root { color-scheme: light dark; --accent:#4f46e5; --accent2:#7c6cf6; --line:#8883; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: light-dark(#f7f7fb, #101014); }
+  header { position: sticky; top: 0; z-index: 5; display:flex; justify-content:space-between; align-items:center; padding: 13px 20px; border-bottom: 1px solid var(--line); background: light-dark(#ffffffcc, #16161ccc); backdrop-filter: blur(10px); }
+  .logo { font-size: 22px; font-weight: 800; letter-spacing: -.02em; } .logo span { background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  main { max-width: 820px; margin: 0 auto; padding: 26px 16px 96px; }
+  .card { border: 1px solid var(--line); border-radius: 16px; padding: 22px; background: light-dark(#fff, #17171d); box-shadow: 0 1px 3px #0001, 0 8px 24px -18px #0006; }
+  .card h3 { letter-spacing: -.01em; }
+  input[type=email], input[type=password], input[type=text] { width: 100%; padding: 12px 14px; margin: 6px 0 12px; border-radius: 10px; border: 1px solid #8886; font-size: 16px; background: transparent; }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+  select { background: transparent; }
+  button { background: linear-gradient(180deg, var(--accent2), var(--accent)); color: #fff; border: 0; border-radius: 10px; padding: 11px 18px; font-size: 15px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px -2px #4f46e588; }
+  button:active { transform: translateY(1px); }
+  button:disabled { opacity: .55; cursor: default; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); box-shadow: none; }
   .row { display:flex; gap: 10px; align-items:center; }
-  .muted { opacity: .7; font-size: 14px; }
-  .result { padding: 14px 0; border-bottom: 1px solid #8882; }
-  .result h3 { margin: 0 0 4px; font-size: 17px; }
+  .muted { opacity: .68; font-size: 14px; }
+  .result { padding: 16px 2px; border-bottom: 1px solid #8882; }
+  .result h3 { margin: 0 0 5px; font-size: 17px; }
   .result h3 a { color: var(--accent); text-decoration: none; }
   .summary { background: #4f46e514; border: 1px solid #4f46e533; border-radius: 12px; padding: 16px; margin: 18px 0; white-space: pre-wrap; }
-  .err { color: #dc2626; min-height: 20px; }
-  .hidden { display: none; }
-  #searchbar { display:flex; gap: 10px; } #searchbar input { margin: 0; }
+  .err { color: #dc2626; min-height: 20px; font-size: 14px; }
+  .hidden { display: none !important; }
+  #searchbar { display:flex; gap: 10px; } #searchbar input { margin: 0; padding: 14px 16px; border-radius: 12px; font-size: 17px; }
+  /* Floating chat widget */
+  #chatfab { position: fixed; right: 20px; bottom: 20px; z-index: 40; width: 58px; height: 58px; border-radius: 50%; font-size: 25px; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 26px -6px #4f46e5aa; }
+  #chatpanel { position: fixed; top: 0; right: 0; z-index: 41; width: min(392px, 100vw); height: 100dvh; display: flex; flex-direction: column; background: light-dark(#fff, #17171d); border-left: 1px solid var(--line); box-shadow: -18px 0 44px -20px #0007; transform: translateX(105%); transition: transform .26s ease; }
+  #chatpanel.open { transform: translateX(0); }
+  #chathead { display:flex; align-items:flex-start; justify-content:space-between; gap: 10px; padding: 16px 18px 12px; border-bottom: 1px solid var(--line); }
+  #chathead .t { font-size: 17px; font-weight: 700; }
+  #chatclose { background: transparent; color: inherit; border: 0; box-shadow: none; font-size: 19px; padding: 2px 8px; }
+  #chatlog { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 86%; padding: 10px 13px; border-radius: 15px; font-size: 15px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.you { align-self: flex-end; background: linear-gradient(180deg, var(--accent2), var(--accent)); color: #fff; border-bottom-right-radius: 5px; }
+  .msg.bot { align-self: flex-start; background: light-dark(#eef0f6, #23232c); border-bottom-left-radius: 5px; }
+  .msg.thinking { opacity: .6; font-style: italic; }
+  #chatfoot { border-top: 1px solid var(--line); padding: 12px; }
+  #chatfoot .row { align-items: stretch; }
+  #chatinput { margin: 0 !important; flex: 1; }
 </style>
 </head>
 <body>
@@ -70,18 +91,6 @@
     <div class="err" id="searcherr"></div>
     <div id="summary" class="summary hidden"></div>
     <div id="results"></div>
-
-    <!-- Chat (A2A agent) -->
-    <div id="chatbox" class="card" style="margin-top:28px">
-      <h3 style="margin-top:0">Chat with your documents</h3>
-      <div id="chatlog" style="display:flex; flex-direction:column; gap:8px; margin-bottom:10px"></div>
-      <div class="row">
-        <input id="chatinput" type="text" placeholder="Ask a question…" style="flex:1" />
-        <button id="chatsend">Ask</button>
-      </div>
-      <div class="err" id="chaterr"></div>
-      <p class="muted" style="margin-bottom:0">Powered by the Khoj A2A agent — answers are grounded in the corpus selected above.</p>
-    </div>
 
     <!-- Your documents -->
     <div id="uploadbox" class="card" style="margin-top:28px">
@@ -220,6 +229,8 @@ onAuthStateChanged(auth, async (user) => {
   $("authview").classList.toggle("hidden", signedIn);
   $("searchview").classList.toggle("hidden", !signedIn);
   $("userbox").classList.toggle("hidden", !signedIn);
+  $("chatfab").classList.toggle("hidden", !signedIn);
+  if (!signedIn) $("chatpanel").classList.remove("open");
   if (user) {
     $("useremail").textContent = user.email;
     renderMcpConfig();
@@ -437,7 +448,7 @@ $("savebranding").onclick = async () => {
   if (resp.ok) await loadOrgs();
 };
 
-$("corpus").onchange = () => { loadDocs(); refreshMemberBox(); chatContext = null; $("chatlog").innerHTML = ""; };
+$("corpus").onchange = () => { loadDocs(); refreshMemberBox(); chatContext = null; $("chatlog").innerHTML = ""; chatSyncCorpus(); };
 
 $("createbiz").onclick = async () => {
   const name = $("bizname").value.trim();
@@ -518,30 +529,48 @@ $("go").onclick = doSearch;
 $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
 
 let chatContext = null;
-function chatAdd(who, body) {
+function chatScroll() { const log = $("chatlog"); log.scrollTop = log.scrollHeight; }
+function chatAdd(who, body, cls) {
   const div = document.createElement("div");
-  const b = document.createElement("b");
-  b.textContent = who + ": ";
-  div.appendChild(b);
-  div.appendChild(document.createTextNode(body));
-  div.style.whiteSpace = "pre-wrap";
+  div.className = "msg " + (cls || (who === "You" ? "you" : "bot"));
+  div.textContent = body;
   $("chatlog").appendChild(div);
+  chatScroll();
+  return div;
 }
+function chatSyncCorpus() {
+  const sel = $("corpus");
+  $("chatcorpus").textContent = sel && sel.selectedIndex > 0 ? sel.options[sel.selectedIndex].text : "My documents";
+}
+$("chatfab").onclick = () => { $("chatpanel").classList.add("open"); chatSyncCorpus(); $("chatinput").focus(); };
+$("chatclose").onclick = () => $("chatpanel").classList.remove("open");
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("chatpanel").classList.remove("open"); });
 async function doChat() {
   const text = $("chatinput").value.trim();
   if (!text) return;
   $("chaterr").textContent = "";
   chatAdd("You", text);
   $("chatinput").value = "";
-  const resp = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + (await token()) },
-    body: JSON.stringify({ message: text, contextId: chatContext, orgId: currentOrg() }),
-  });
-  if (!resp.ok) { $("chaterr").textContent = "Chat failed: " + (await resp.text()); return; }
-  const data = await resp.json();
-  chatContext = data.contextId;
-  chatAdd("Khoj", data.reply + (data.sources && data.sources.length ? "\nSources: " + data.sources.join(", ") : ""));
+  $("chatsend").disabled = true;
+  const thinking = chatAdd("Khoj", "Thinking…", "bot thinking");
+  try {
+    const resp = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + (await token()) },
+      body: JSON.stringify({ message: text, contextId: chatContext, orgId: currentOrg() }),
+    });
+    if (!resp.ok) { $("chaterr").textContent = "Chat failed: " + (await resp.text()); return; }
+    const data = await resp.json();
+    chatContext = data.contextId;
+    thinking.remove();
+    chatAdd("Khoj", data.reply + (data.sources && data.sources.length ? "\n\nSources: " + data.sources.join(", ") : ""));
+  } catch (e) {
+    $("chaterr").textContent = "Chat failed: " + e;
+  } finally {
+    thinking.remove();
+    $("chatsend").disabled = false;
+    chatScroll();
+  }
 }
 $("chatsend").onclick = doChat;
 $("chatinput").addEventListener("keydown", (e) => { if (e.key === "Enter") doChat(); });
@@ -564,5 +593,26 @@ $("upload").onclick = async () => {
   if (resp.ok) setTimeout(loadDocs, 3000);
 };
 </script>
+
+<!-- Floating chat widget (A2A agent) -->
+<button id="chatfab" class="hidden" title="Chat with your documents" aria-label="Open chat">💬</button>
+<aside id="chatpanel" aria-label="Chat with your documents">
+  <div id="chathead">
+    <div>
+      <div class="t">Chat with your documents</div>
+      <div class="muted" id="chatcorpus">My documents</div>
+    </div>
+    <button id="chatclose" aria-label="Close chat">✕</button>
+  </div>
+  <div id="chatlog"></div>
+  <div id="chatfoot">
+    <div class="row">
+      <input id="chatinput" type="text" placeholder="Ask a question…" />
+      <button id="chatsend">Ask</button>
+    </div>
+    <div class="err" id="chaterr"></div>
+    <div class="muted" style="font-size:12px">Powered by the Khoj A2A agent — answers are grounded in the selected corpus.</div>
+  </div>
+</aside>
 </body>
 </html>
