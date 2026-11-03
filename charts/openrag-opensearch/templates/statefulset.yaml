@@ -11,11 +11,19 @@ spec:
     metadata:
       labels: { app: opensearch }
     spec:
+      # Kubernetes would otherwise inject OPENRAG_BACKEND_PORT=
+      # tcp://<cluster-ip>:8000 for the Service named "openrag-backend",
+      # and this image's setup-security.sh builds the OIDC discovery URL
+      # from that variable - producing the malformed
+      # http://openrag-backend:tcp://<ip>:8000/.well-known/... in the
+      # applied security config, which made OpenSearch unable to fetch
+      # the backend's JWKS and reject every JWT search with 401
+      # (found live, Nov 3 2026; same bug class as the langflow port).
+      enableServiceLinks: false
       # Fresh PVCs arrive root-owned; OpenSearch (uid 1000) then cannot
       # write its data dir (AccessDeniedException on .../data/nodes, the
       # JVM stays up but never listens - exactly the VM deploy's chown
-      # lesson, GKE edition, Nov 3 2026). fsGroup covers new volumes; the
-      # initContainer chown covers volumes that already exist root-owned.
+      # lesson, GKE edition, Nov 3 2026). fsGroup covers new volumes.
       securityContext:
         fsGroup: 1000
       containers:
