@@ -161,24 +161,37 @@ def run_search(
     source: str = "web",
 ) -> dict:
     url = f"{DE_BASE}/engines/{ENGINE_ID}/servingConfigs/default_search:search"
-    payload = {
+    base = {
         "query": query,
         "pageSize": page_size,
         "filter": corpus_filter(user, org_id),
         "spellCorrectionSpec": {"mode": "AUTO"},
         "queryExpansionSpec": {"condition": "AUTO"},
-        "contentSearchSpec": {
-            "summarySpec": {
-                "summaryResultCount": 3,
-                "includeCitations": True,
-                "ignoreAdversarialQuery": True,
-            },
-            "snippetSpec": {"returnSnippet": True},
-            "extractiveContentSpec": {"maxExtractiveAnswerCount": 1},
-        },
     }
+    rich_spec = {
+        "summarySpec": {
+            "summaryResultCount": 3,
+            "includeCitations": True,
+            "ignoreAdversarialQuery": True,
+        },
+        "snippetSpec": {"returnSnippet": True},
+        "extractiveContentSpec": {"maxExtractiveAnswerCount": 1},
+    }
+    # Summary + extractive answers are Enterprise-edition features. The
+    # engine may be Standard edition (cheaper); try the rich request and
+    # fall back to snippet-only search when Vertex rejects it, instead of
+    # failing the user's search.
     started = time.monotonic()
-    resp = requests.post(url, json=payload, headers=_headers(), timeout=30)
+    resp = requests.post(
+        url, json={**base, "contentSearchSpec": rich_spec},
+        headers=_headers(), timeout=30,
+    )
+    if resp.status_code == 400 and "enterprise edition" in resp.text.lower():
+        resp = requests.post(
+            url,
+            json={**base, "contentSearchSpec": {"snippetSpec": {"returnSnippet": True}}},
+            headers=_headers(), timeout=30,
+        )
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Search backend: {resp.text[:300]}")
     data = resp.json()
