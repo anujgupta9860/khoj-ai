@@ -18,17 +18,14 @@ spec:
       # initContainer chown covers volumes that already exist root-owned.
       securityContext:
         fsGroup: 1000
-      initContainers:
-        - name: chown-data
-          image: {{ .Values.image }}
-          command: ["sh", "-c", "chown -R 1000:1000 /usr/share/opensearch/data"]
-          securityContext:
-            runAsUser: 0
-          volumeMounts:
-            - { name: data, mountPath: /usr/share/opensearch/data }
       containers:
         - name: opensearch
           image: {{ .Values.image }}
+          # Upstream compose command, verbatim semantics: fix data-dir
+          # ownership, start OpenSearch, apply the image's security
+          # setup in the background. (Our earlier initContainer chown is
+          # subsumed by the sudo chown here.)
+          command: ["bash", "-c", "sudo chown -R opensearch:opensearch /usr/share/opensearch/data || true; /usr/share/opensearch/opensearch-docker-entrypoint.sh opensearch & sleep 10 && /usr/share/opensearch/setup-security.sh & wait"]
           ports: [{ containerPort: 9200 }]
           env:
             - { name: discovery.type, value: single-node }

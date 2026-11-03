@@ -16,5 +16,12 @@ spec:
           ports: [{ containerPort: 5601 }]
           env:
             - { name: OPENSEARCH_HOSTS, value: {{ .Values.opensearchHost | quote }} }
+            # Upstream compose also passes the admin credentials -
+            # without them Dashboards cannot connect to the secured
+            # cluster (chart originally shipped without any secret).
+            - { name: OPENSEARCH_USERNAME, value: "admin" }
+            - name: OPENSEARCH_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: opensearch-secrets, key: OPENSEARCH_INITIAL_ADMIN_PASSWORD }
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

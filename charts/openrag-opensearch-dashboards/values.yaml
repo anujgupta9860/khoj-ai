@@ -1,4 +1,4 @@
-image: opensearchproject/opensearch-dashboards:2.19.1
+image: opensearchproject/opensearch-dashboards:3.0.0
 opensearchHost: https://opensearch:9200
 ingress:
   enabled: true

@@ -1,4 +1,9 @@
-image: opensearchproject/opensearch:2.19.1
+# Upstream's CUSTOM OpenSearch image - NOT the stock one. The backend's
+# index mapping requires the "jvector" k-NN engine, which only this build
+# ships (stock 2.19.1 rejects index creation: "Invalid engine: jvector").
+# It is also OpenSearch 3.x (pairs with dashboards 3.0.0) and carries the
+# setup-security.sh the compose command runs after start.
+image: langflowai/openrag-opensearch:latest
 # Admin password is NOT a value: it syncs from Google Secret Manager
 # (openrag-opensearch-admin-password) via External Secrets Operator.
 storage: 30Gi
