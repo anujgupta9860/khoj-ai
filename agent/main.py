@@ -161,10 +161,11 @@ def search_snippets(query: str, user: dict, org_id: str | None, page_size: int =
             out.append({
                 "title": struct.get("title") or derived.get("title") or doc.get("id", ""),
                 "snippets": snippets,
-                # Corpus scope value (uid or org id): the source file
-                # lives in GCS at {scope}/{title} (the web service's
-                # upload layout), which the extractive path reads.
-                "scope": want,
+                # Actual GCS scope prefix: the web service stores
+                # personal uploads under users/{uid}/ and business
+                # uploads under orgs/{orgId}/. The extractive path
+                # reads the source file from that exact layout.
+                "scope": f"users/{want}" if key == "user_id" else f"orgs/{want}",
             })
         if len(out) >= page_size:
             break

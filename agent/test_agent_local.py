@@ -165,6 +165,9 @@ with zipfile.ZipFile(docx_buffer, "w") as zf:
           </w:body>
         </w:document>""",
     )
+search_sources = agent_main.search_snippets("warranty?", {"uid": "user-123"}, None)
+assert search_sources[0]["scope"] == "users/user-123", search_sources
+
 resume_text = agent_main.extract_text("anujResume_2024.docx", docx_buffer.getvalue())
 assert "TECHNICAL SKILLS" in resume_text
 assert "distributed systems design for resilient production services" in resume_text
