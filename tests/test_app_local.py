@@ -174,7 +174,18 @@ class SearchResp:
         return {
             "summary": {"summaryText": "S"},
             "totalSize": 0,
-            "results": [],
+            "results": [
+                {"document": {
+                    "id": "d1",
+                    "structData": {"user_id": "user-123", "title": "mine.md"},
+                    "derivedStructData": {"snippets": [{"snippet": "mine"}]},
+                }},
+                {"document": {
+                    "id": "d2",
+                    "structData": {"org_id": ORG_ID, "title": "biz.md"},
+                    "derivedStructData": {"snippets": [{"snippet": "biz"}]},
+                }},
+            ],
             "name": "operations/x",
         }
 
@@ -229,11 +240,14 @@ assert docs["d1"]["status"] == "ready", docs         # already in the index
 assert docs[new_doc]["status"] == "indexing", docs   # uploaded, not indexed yet
 assert docs[new_doc]["title"] == "status.md", docs
 
-# personal search uses the user filter; org search uses the org filter
-client.post("/api/search", json={"query": "q"}, headers=H)
-assert search_payloads[-1]["filter"] == 'user_id: ANY("user-123")'
-client.post("/api/search", json={"query": "q", "orgId": ORG_ID}, headers=H)
-assert search_payloads[-1]["filter"] == f'org_id: ANY("{ORG_ID}")'
+# search scope is enforced by post-filtering on structData (the data
+# store schema does not expose user_id/org_id as filterable fields):
+# the engine is queried unfiltered, other corpora's hits are dropped
+r = client.post("/api/search", json={"query": "q"}, headers=H)
+assert [x["title"] for x in r.json()["results"]] == ["mine.md"]
+assert "filter" not in search_payloads[-1]
+r = client.post("/api/search", json={"query": "q", "orgId": ORG_ID}, headers=H)
+assert [x["title"] for x in r.json()["results"]] == ["biz.md"]
 
 # document listing is scoped the same way (status.md is the same user's
 # upload from the status test above; biz.md must NOT leak into this list)
@@ -293,7 +307,9 @@ r = rpc({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
          "params": {"name": "search_documents",
                     "arguments": {"query": "q", "orgId": ORG_ID}}})
 assert r.json()["result"]["isError"] is False, r.text
-assert search_payloads[-1]["filter"] == f'org_id: ANY("{ORG_ID}")'
+mcp_text = r.json()["result"]["content"][0]["text"]
+assert "biz.md" in mcp_text and "mine.md" not in mcp_text  # org scope only
+assert "filter" not in search_payloads[-1]
 CURRENT["user"] = USER
 
 # --- Invitations + branding ---------------------------------------------------
@@ -437,7 +453,7 @@ r = client.get("/api/admin/metrics", headers=H)
 m = r.json()
 assert m["orgs"]["approved"] >= 2 and m["orgs"]["rejected"] == 1, m["orgs"]
 assert m["searches"]["total"] >= 3 and m["searches"]["uniqueUsers"] >= 1
-assert m["searches"]["zeroResultRate"] == 1.0  # canned backend returns 0 results
+assert m["searches"]["zeroResultRate"] < 1.0  # in-scope searches above returned results
 CURRENT["user"] = USER
 
 # --- chat: the web service as an A2A client of the agent --------------------

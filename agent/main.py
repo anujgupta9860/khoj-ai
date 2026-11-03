@@ -76,7 +76,11 @@ def require_user(authorization: str | None) -> dict:
     return {"uid": decoded["uid"], "email": decoded.get("email", "")}
 
 
-def corpus_filter(user: dict, org_id: str | None) -> str:
+def authorize_scope(user: dict, org_id: str | None) -> tuple:
+    """Membership/approval gate for business corpora; returns the
+    (structData key, expected value) pair this caller may see. Scope is
+    enforced by post-filtering: the data store's auto-derived schema
+    does not expose user_id/org_id as filterable fields."""
     if org_id:
         svc = org_service()
         if svc.membership(user["uid"], org_id) is None:
@@ -84,17 +88,17 @@ def corpus_filter(user: dict, org_id: str | None) -> str:
         org = svc.get_org(org_id)
         if org and org.get("status") != "approved":
             raise PermissionError("This business is pending approval")
-        return f'org_id: ANY("{org_id}")'
-    return f'user_id: ANY("{user["uid"]}")'
+        return "org_id", org_id
+    return "user_id", user["uid"]
 
 
 def search_snippets(query: str, user: dict, org_id: str | None, page_size: int = 5) -> list:
     """Standard-edition Vertex search: titles + snippets for grounding."""
+    key, want = authorize_scope(user, org_id)
     url = f"{DE_BASE}/engines/{ENGINE_ID}/servingConfigs/default_search:search"
     payload = {
         "query": query,
-        "pageSize": page_size,
-        "filter": corpus_filter(user, org_id),
+        "pageSize": min(page_size * 5, 50),
         "spellCorrectionSpec": {"mode": "AUTO"},
         "contentSearchSpec": {"snippetSpec": {"returnSnippet": True}},
     }
@@ -109,6 +113,8 @@ def search_snippets(query: str, user: dict, org_id: str | None, page_size: int =
         doc = r.get("document", {})
         derived = doc.get("derivedStructData", {})
         struct = doc.get("structData", {})
+        if struct.get(key) != want:
+            continue  # another corpus's document - never used for grounding
         snippets = [
             s.get("snippet", "") for s in derived.get("snippets", []) if s.get("snippet")
         ]
@@ -117,6 +123,8 @@ def search_snippets(query: str, user: dict, org_id: str | None, page_size: int =
                 "title": struct.get("title") or derived.get("title") or doc.get("id", ""),
                 "snippets": snippets,
             })
+        if len(out) >= page_size:
+            break
     return out
 
 

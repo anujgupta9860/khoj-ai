@@ -161,11 +161,17 @@ def run_search(
     org_id: str | None = None,
     source: str = "web",
 ) -> dict:
+    # Authorization happens here (membership + approval for orgs); the
+    # corpus scope itself is enforced by post-filtering below, because
+    # this data store's schema (auto-derived from the first, untagged
+    # seed import) does not know user_id/org_id as filterable fields -
+    # Vertex rejects a filter on them with "Unsupported field".
+    corpus_filter(user, org_id)
+    key, want = ("org_id", org_id) if org_id else ("user_id", user["uid"])
     url = f"{DE_BASE}/engines/{ENGINE_ID}/servingConfigs/default_search:search"
     base = {
         "query": query,
-        "pageSize": page_size,
-        "filter": corpus_filter(user, org_id),
+        "pageSize": min(page_size * 5, 50),
         "spellCorrectionSpec": {"mode": "AUTO"},
         "queryExpansionSpec": {"condition": "AUTO"},
     }
@@ -201,6 +207,10 @@ def run_search(
         doc = r.get("document", {})
         derived = doc.get("derivedStructData", {})
         struct = doc.get("structData", {})
+        if struct.get(key) != want:
+            continue  # another corpus's document - never returned
+        if len(results) >= page_size:
+            break
         results.append(
             {
                 "title": struct.get("title") or derived.get("title") or doc.get("id", ""),
@@ -219,7 +229,7 @@ def run_search(
         )
     out = {
         "summary": data.get("summary", {}).get("summaryText", ""),
-        "totalSize": data.get("totalSize", len(results)),
+        "totalSize": len(results),
         "results": results,
     }
     log_event(

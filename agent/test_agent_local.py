@@ -48,7 +48,7 @@ def fake_post(url, json=None, headers=None, timeout=None):
         "results": [{
             "document": {
                 "id": "d1",
-                "structData": {"title": "doc.md"},
+                "structData": {"title": "doc.md", "user_id": "user-123"},
                 "derivedStructData": {"snippets": [{"snippet": "The pump warranty is 2 years."}]},
             }
         }]
