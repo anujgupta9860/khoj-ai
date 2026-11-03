@@ -686,6 +686,40 @@ _MIME_BY_EXT = {
 }
 
 
+def _create_knowledge_filter(openrag_name: str, filename: str) -> None:
+    """Best-effort: register an uploaded document as an OpenRAG
+    knowledge filter so Khoj uploads also land in OpenRAG's Knowledge
+    tab. That tab lists filters, not files; one filter per document
+    (data_sources = [the document]) is OpenRAG's own onboarding
+    convention. Never fails the upload."""
+    display = os.path.splitext(filename)[0] or filename
+    query_data = {
+        "query": "",
+        "filters": {
+            "data_sources": [openrag_name],
+            "document_types": ["*"],
+            "owners": ["*"],
+            "connector_types": ["*"],
+        },
+        "limit": 10,
+        "scoreThreshold": 0,
+        "color": "green",
+        "icon": "file",
+    }
+    try:
+        requests.post(
+            f"{OPENRAG_URL}/knowledge-filter",
+            json={
+                "name": display,
+                "description": f"Uploaded via Khoj: {filename}",
+                "queryData": query_data,
+            },
+            timeout=15,
+        )
+    except Exception:
+        pass
+
+
 @app.post("/api/upload")
 def upload(
     file: UploadFile = File(...),
@@ -738,6 +772,7 @@ def upload(
         })
     except Exception:
         pass  # status tracking is best-effort; the upload itself succeeded
+    _create_knowledge_filter(or_name, filename)
     log_event(
         kind="upload",
         uid=user["uid"],

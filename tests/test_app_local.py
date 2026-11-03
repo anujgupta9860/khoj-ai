@@ -162,7 +162,7 @@ assert r.json()["documentId"] == doc_id
 assert r.json()["task"] == "task-0"
 assert "users/user-123/notes.md" in blobs
 assert not any(k.startswith("meta/") for k in blobs), list(blobs)
-assert ingest_calls[-1][1] == main.openrag_filename(doc_id, "notes.md")
+assert [c for c in ingest_calls if c[1]][-1][1] == main.openrag_filename(doc_id, "notes.md")
 
 # --- Businesses: shared corpus with membership enforced ----------------------
 from types import SimpleNamespace
@@ -196,6 +196,7 @@ CORPUS = {"biz_name": None, "team_name": None}
 
 search_payloads = []
 upload_names = []
+filter_calls = []
 
 
 def openrag_post(url, json=None, files=None, headers=None, timeout=None):
@@ -204,6 +205,9 @@ def openrag_post(url, json=None, files=None, headers=None, timeout=None):
     if path == "/router/upload_ingest":
         upload_names.append(files["file"][0])
         return Resp({"task_id": "task-1"}, status=202)
+    if path == "/knowledge-filter":
+        filter_calls.append(json)
+        return Resp({"success": True, "id": "kf-1"})
     if path == "/search":
         search_payloads.append(json)
         if (json or {}).get("query") == "zzz-floor":
@@ -275,6 +279,9 @@ assert r.status_code == 200, r.text
 new_doc = r.json()["documentId"]
 STATUS_NAME = main.openrag_filename(new_doc, "status.md")
 assert upload_names[-1] == STATUS_NAME
+# the upload also registered a knowledge filter (OpenRAG Knowledge tab)
+assert filter_calls and filter_calls[-1]["name"] == "status", filter_calls
+assert filter_calls[-1]["queryData"]["filters"]["data_sources"] == [STATUS_NAME]
 r = client.get("/api/documents", headers=H)
 docs = {d["id"]: d for d in r.json()["documents"]}
 assert docs[MINE_ID]["status"] == "ready", docs        # already in OpenRAG
