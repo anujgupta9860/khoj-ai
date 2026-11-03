@@ -5,6 +5,7 @@ opensearchUrl: https://opensearch:9200
 opensearchHost: opensearch
 opensearchPort: "9200"
 langflowUrl: http://langflow:7860
+langflowSuperuser: langflow
 doclingUrl: http://docling:5001
 llm:
   provider: openai

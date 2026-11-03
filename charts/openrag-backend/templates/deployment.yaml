@@ -31,6 +31,11 @@ spec:
             - { name: OPENSEARCH_HOST, value: {{ .Values.opensearchHost }} }
             - { name: OPENSEARCH_PORT, value: {{ .Values.opensearchPort | quote }} }
             - { name: LANGFLOW_URL, value: {{ .Values.langflowUrl }} }
+            # settings.py skips Langflow API-key generation unless the
+            # superuser NAME is present (the password arrives via the
+            # synced secret) - without it onboarding dies with
+            # "No Langflow API key available" (found live, Nov 3 2026).
+            - { name: LANGFLOW_SUPERUSER, value: {{ .Values.langflowSuperuser }} }
             - { name: DOCLING_SERVE_URL, value: {{ .Values.doclingUrl }} }
             - { name: LANGFLOW_ALLOW_CUSTOM_COMPONENTS, value: "true" }
             # Single-node OpenSearch expectations (learned on the VM deploy)
