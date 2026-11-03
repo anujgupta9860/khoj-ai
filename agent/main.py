@@ -39,7 +39,7 @@ from firebase_admin import firestore as fb_firestore
 from google.auth import default as google_auth_default
 from google.auth.transport.requests import Request as GoogleAuthRequest
 
-from app.orgs import FirestoreOrgService
+from app.orgs import PLATFORM_ORG_ID, FirestoreOrgService
 
 PROJECT = os.environ.get("GCP_PROJECT", "innovation-lab-2026")
 BUCKET = os.environ.get("KHOJ_BUCKET", "khoj-ai-corpus-innovation-lab")
@@ -115,11 +115,29 @@ def search_snippets(query: str, user: dict, org_id: str | None, page_size: int =
         records = org_service().list_uploads(scope_key)
     except Exception:
         records = []
-    by_name = {
-        f"{r.get('docId', '')}--{r.get('filename', '')}": r.get("filename", "")
-        for r in records
-        if r.get("docId") and r.get("filename")
-    }
+    if org_id != PLATFORM_ORG_ID:
+        # The global corpus (platform org documents) is searchable by
+        # every caller, alongside - never instead of - their own.
+        try:
+            seen = {r.get("docId") for r in records}
+            for rec in org_service().list_uploads(f"org:{PLATFORM_ORG_ID}"):
+                if rec.get("docId") not in seen:
+                    records.append(rec)
+        except Exception:
+            pass
+    by_name = {}
+    for r in records:
+        if not (r.get("docId") and r.get("filename")):
+            continue
+        name = f"{r['docId']}--{r['filename']}"
+        # Global-corpus files live under the platform org's GCS prefix;
+        # the caller's own files under theirs (extractive fetch keys).
+        prefix = (
+            f"orgs/{PLATFORM_ORG_ID}"
+            if r.get("scopeKey") == f"org:{PLATFORM_ORG_ID}"
+            else scope_prefix
+        )
+        by_name[name] = (r["filename"], prefix)
     if not by_name:
         return []
     resp = requests.post(
@@ -142,10 +160,11 @@ def search_snippets(query: str, user: dict, org_id: str | None, page_size: int =
         if name not in by_name:
             continue  # another corpus's document - never used for grounding
         if name not in grouped:
+            title, prefix = by_name[name]
             grouped[name] = {
-                "title": by_name[name],
+                "title": title,
                 "snippets": [],
-                "scope": scope_prefix,
+                "scope": prefix,
                 "_score": chunk.get("score", 0),
             }
             order.append(name)

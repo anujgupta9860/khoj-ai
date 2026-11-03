@@ -108,6 +108,31 @@ def scope_of(user: dict, org_id: str | None) -> tuple[str, str]:
     return f"users/{user['uid']}", f"user:{user['uid']}"
 
 
+GLOBAL_SCOPE_KEY = f"org:{PLATFORM_ORG_ID}"
+
+
+def _corpus_records(user: dict, org_id: str | None) -> list:
+    """Upload records for the caller's own corpus PLUS the global
+    corpus: the platform org's documents, which every signed-in user
+    and every business may query (but never another business's)."""
+    records = _scope_records(user, org_id)
+    if org_id != PLATFORM_ORG_ID:
+        try:
+            global_records = org_service().list_uploads(GLOBAL_SCOPE_KEY)
+        except Exception:
+            global_records = []
+        seen = {r.get("docId") for r in records}
+        for rec in global_records:
+            if rec.get("docId") in seen:
+                continue
+            rec["_openrag_name"] = openrag_filename(
+                rec.get("docId", ""), rec.get("filename", "")
+            )
+            rec["_global"] = True
+            records.append(rec)
+    return records
+
+
 def _scope_records(user: dict, org_id: str | None) -> list:
     """Upload records for the caller's corpus, each enriched with its
     OpenRAG filename. These records are the corpus membership list."""
@@ -211,7 +236,7 @@ def run_search(
     # this corpus's document names (each name carries its doc-id
     # prefix), plus a post-filter as a second line of defence.
     authorize_corpus(user, org_id)
-    records = _scope_records(user, org_id)
+    records = _corpus_records(user, org_id)
     by_name = {r["_openrag_name"]: r.get("filename", "") for r in records}
     started = time.monotonic()
     results = []
@@ -310,7 +335,7 @@ def list_documents(user: dict, org_id: str | None = None) -> list:
     once OpenRAG has indexed it, or shows 'failed' when its ingestion
     task reports an error."""
     authorize_corpus(user, org_id)
-    records = _scope_records(user, org_id)
+    records = _corpus_records(user, org_id)
     if not records:
         return []
     indexed = _openrag_files()
@@ -322,6 +347,7 @@ def list_documents(user: dict, org_id: str | None = None) -> list:
                 "id": doc_id,
                 "title": rec.get("filename") or doc_id,
                 "status": "ready",
+                "corpus": "global" if rec.get("_global") else "own",
             }
             continue
         error = _openrag_task_error(rec.get("openragTask", ""))
@@ -329,6 +355,7 @@ def list_documents(user: dict, org_id: str | None = None) -> list:
             "id": doc_id,
             "title": rec.get("filename") or doc_id,
             "status": "failed" if error else "indexing",
+            "corpus": "global" if rec.get("_global") else "own",
         }
         if error:
             item["error"] = error

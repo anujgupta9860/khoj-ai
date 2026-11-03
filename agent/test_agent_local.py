@@ -39,6 +39,18 @@ agent_main._org_service.record_upload({
 })
 OPENRAG_NAME = "doc-test123--doc.md"
 
+# the global corpus (platform org documents) is searchable by everyone
+agent_main._org_service.record_upload({
+    "docId": "doc-global1",
+    "scopeKey": "org:khoj",
+    "uid": "admin-0",
+    "orgId": "khoj",
+    "filename": "handbook.md",
+    "openragTask": "task-0",
+    "uploadedAt": 0,
+})
+GLOBAL_NAME = "doc-global1--handbook.md"
+
 calls = []
 
 
@@ -58,11 +70,18 @@ def fake_post(url, json=None, headers=None, timeout=None):
         return Resp({"choices": [{"message": {"content": "Grounded answer [1]."}}]})
     # OpenRAG chunk search
     return Resp({
-        "results": [{
-            "filename": OPENRAG_NAME,
-            "text": "The <b>pump</b> warranty is&nbsp;2 years.",
-            "score": 3.5,
-        }]
+        "results": [
+            {
+                "filename": OPENRAG_NAME,
+                "text": "The <b>pump</b> warranty is&nbsp;2 years.",
+                "score": 3.5,
+            },
+            {
+                "filename": GLOBAL_NAME,
+                "text": "The global handbook says hello.",
+                "score": 1.0,
+            },
+        ]
     })
 
 
@@ -95,13 +114,14 @@ assert r.status_code == 200, r.text
 result = r.json()["result"]
 assert result["kind"] == "message" and result["role"] == "agent"
 assert "Grounded answer" in result["parts"][0]["text"]
-assert result["metadata"]["sources"] == ["doc.md"]
+assert result["metadata"]["sources"] == ["doc.md", "handbook.md"]
 assert result["contextId"]
 
 # the OpenRAG search was filtered to exactly this corpus's documents,
 # and the answer came from the configured OpenAI model
 search_calls = [j for u, j in calls if "api/search" in u]
-assert search_calls and search_calls[-1]["filters"] == {"filename": [OPENRAG_NAME]}, search_calls
+assert search_calls and search_calls[-1]["filters"] == {
+    "filename": sorted([OPENRAG_NAME, GLOBAL_NAME])}, search_calls
 model_calls = [j for u, j in calls if "api.openai.com" in u]
 assert model_calls and model_calls[-1]["model"] == "gpt-4o-mini", model_calls
 
@@ -186,6 +206,8 @@ with zipfile.ZipFile(docx_buffer, "w") as zf:
 search_sources = agent_main.search_snippets("warranty?", {"uid": "user-123"}, None)
 assert search_sources[0]["scope"] == "users/user-123", search_sources
 assert search_sources[0]["title"] == "doc.md", search_sources
+assert search_sources[1]["title"] == "handbook.md", search_sources  # global corpus
+assert search_sources[1]["scope"] == "orgs/khoj", search_sources
 
 resume_text = agent_main.extract_text("anujResume_2024.docx", docx_buffer.getvalue())
 assert "TECHNICAL SKILLS" in resume_text

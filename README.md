@@ -16,7 +16,10 @@ Every document is stored in OpenRAG under a name derived from its
 scope + filename (`<docId>--<filename>`, docId = sha256 of
 `{scope}/{filename}`), and every search is filtered server-side to
 exactly the document names of a corpus the verified caller belongs
-to — businesses by `org_id`, personal corpora by Firebase uid.
+to — businesses by `org_id`, personal corpora by Firebase uid. The
+platform org's corpus is the **global corpus**: searchable by every
+signed-in user and every business, alongside their own documents —
+never another business's.
 
 - **Platform / super admin:** Khoj.ai itself is the platform org (id
   `khoj`). Its admins are super admins: org signups start **pending**

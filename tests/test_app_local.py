@@ -185,6 +185,13 @@ main._org_service.record_upload({
     "orgId": None, "filename": "mine.md", "openragTask": "task-0",
     "uploadedAt": 0,
 })
+GLOBAL_ID = main.document_id("orgs/khoj", "global.md")
+GLOBAL_NAME = main.openrag_filename(GLOBAL_ID, "global.md")
+main._org_service.record_upload({
+    "docId": GLOBAL_ID, "scopeKey": "org:khoj", "uid": "admin-0",
+    "orgId": "khoj", "filename": "global.md", "openragTask": "task-0",
+    "uploadedAt": 0,
+})
 CORPUS = {"biz_name": None, "team_name": None}
 
 search_payloads = []
@@ -199,6 +206,7 @@ def openrag_post(url, json=None, files=None, headers=None, timeout=None):
         search_payloads.append(json)
         results = [
             {"filename": MINE_NAME, "text": "mine <b>text</b>&nbsp;here", "score": 2.0},
+            {"filename": GLOBAL_NAME, "text": "global handbook", "score": 0.5},
         ]
         if CORPUS["biz_name"]:
             results.append({"filename": CORPUS["biz_name"], "text": "biz", "score": 1.0})
@@ -208,7 +216,8 @@ def openrag_post(url, json=None, files=None, headers=None, timeout=None):
 
 def openrag_get(url, params=None, headers=None, timeout=None):
     if url.endswith("/api/files"):
-        files = [{"filename": MINE_NAME, "chunk_count": 3}]
+        files = [{"filename": MINE_NAME, "chunk_count": 3},
+                 {"filename": GLOBAL_NAME, "chunk_count": 5}]
         if CORPUS["biz_name"]:
             files.append({"filename": CORPUS["biz_name"], "chunk_count": 2})
         return Resp({"files": files})
@@ -254,6 +263,8 @@ assert upload_names[-1] == STATUS_NAME
 r = client.get("/api/documents", headers=H)
 docs = {d["id"]: d for d in r.json()["documents"]}
 assert docs[MINE_ID]["status"] == "ready", docs        # already in OpenRAG
+assert docs[GLOBAL_ID]["status"] == "ready" and docs[GLOBAL_ID]["corpus"] == "global", docs
+assert docs[MINE_ID]["corpus"] == "own", docs
 assert docs[new_doc]["status"] == "indexing", docs     # uploaded, not indexed yet
 assert docs[new_doc]["title"] == "status.md", docs
 
@@ -261,19 +272,21 @@ assert docs[new_doc]["title"] == "status.md", docs
 # this corpus's documents, plus post-filtering: other corpora's hits
 # are dropped even when the engine returns them
 r = client.post("/api/search", json={"query": "q"}, headers=H)
-assert [x["title"] for x in r.json()["results"]] == ["mine.md"]
+assert [x["title"] for x in r.json()["results"]] == ["mine.md", "global.md"]
 assert r.json()["results"][0]["snippets"] == ["mine text here"]  # markup/entities stripped
-assert sorted(search_payloads[-1]["filters"]["filename"]) == sorted([MINE_NAME, STATUS_NAME])
+assert sorted(search_payloads[-1]["filters"]["filename"]) == sorted(
+    [MINE_NAME, STATUS_NAME, GLOBAL_NAME])
 r = client.post("/api/search", json={"query": "q", "orgId": ORG_ID}, headers=H)
-assert [x["title"] for x in r.json()["results"]] == ["biz.md"]
-assert search_payloads[-1]["filters"]["filename"] == [CORPUS["biz_name"]]
+assert [x["title"] for x in r.json()["results"]] == ["biz.md", "global.md"]
+assert sorted(search_payloads[-1]["filters"]["filename"]) == sorted(
+    [CORPUS["biz_name"], GLOBAL_NAME])
 
 # document listing is scoped the same way (status.md is the same user's
 # upload from the status test above; biz.md must NOT leak into this list)
 r = client.get("/api/documents", headers=H)
-assert [d["title"] for d in r.json()["documents"]] == ["mine.md", "status.md"]
+assert [d["title"] for d in r.json()["documents"]] == ["global.md", "mine.md", "status.md"]
 r = client.get(f"/api/documents?orgId={ORG_ID}", headers=H)
-assert [d["title"] for d in r.json()["documents"]] == ["biz.md"]
+assert [d["title"] for d in r.json()["documents"]] == ["biz.md", "global.md"]
 
 # add a member (email resolved through Firebase Auth)
 main.fb_auth.get_user_by_email = lambda email: SimpleNamespace(uid="member-9", email=email)
@@ -328,9 +341,10 @@ r = rpc({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
                     "arguments": {"query": "q", "orgId": ORG_ID}}})
 assert r.json()["result"]["isError"] is False, r.text
 mcp_text = r.json()["result"]["content"][0]["text"]
-assert "biz.md" in mcp_text and "mine.md" not in mcp_text  # org scope only
+assert "biz.md" in mcp_text and "global.md" in mcp_text  # org + global
+assert "mine.md" not in mcp_text  # another corpus never leaks in
 assert sorted(search_payloads[-1]["filters"]["filename"]) == sorted(
-    [CORPUS["biz_name"], CORPUS["team_name"]])
+    [CORPUS["biz_name"], CORPUS["team_name"], GLOBAL_NAME])
 CURRENT["user"] = USER
 
 # --- Invitations + branding ---------------------------------------------------
