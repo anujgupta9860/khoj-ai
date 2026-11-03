@@ -110,10 +110,64 @@ def authorize_scope(user: dict, org_id: str | None) -> tuple:
     return f"user:{user['uid']}", f"users/{user['uid']}"
 
 
-def search_snippets(query: str, user: dict, org_id: str | None, page_size: int = 5) -> list:
-    """OpenRAG chunk search over ONLY the caller's corpus: the query
+def _openrag_chunks(query: str, filenames: list, limit: int = 30) -> list:
+    resp = requests.post(
+        f"{OPENRAG_URL}/search",
+        json={"query": query, "filters": {"filename": filenames}, "limit": limit},
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Search backend: {resp.text[:200]}")
+    data = resp.json()
+    return data if isinstance(data, list) else data.get("results", [])
+
+
+def rewrite_query(question: str, history: list) -> str | None:
+    """Turn the user's message into a standalone keyword search query
+    using the model (OpenRAG's own chat does the same via its agent's
+    tool calls; a single raw conversational message embeds poorly).
+    Returns None when no model is available or the rewrite looks
+    unusable - callers then search with the raw message only."""
+    if not OPENAI_API_KEY:
+        return None
+    convo = "\n".join(f"User: {h['q']}\nAssistant: {h['a']}" for h in history[-2:])
+    prompt = (
+        "Rewrite the user's latest message as ONE standalone keyword "
+        "search query for a document search index. Include the concrete "
+        "nouns, names, form/field labels and synonyms that the matching "
+        "passage would use. Use the conversation only to resolve "
+        "references. Output ONLY the query text - no quotes, no "
+        "explanation.\n\n"
+        f"Conversation:\n{convo or '(none)'}\n\nLatest message: {question}"
+    )
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            json={
+                "model": OPENAI_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+            },
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            timeout=20,
+        )
+        if resp.status_code != 200:
+            return None
+        text = resp.json()["choices"][0]["message"]["content"].strip()
+        if not text or len(text) > 200 or "[" in text or "\n" in text:
+            return None
+        return text
+    except Exception as e:
+        print(f"rewrite_query: skipped: {e!r}", flush=True)
+        return None
+
+
+def search_snippets(queries: list, user: dict, org_id: str | None, page_size: int = 6) -> list:
+    """OpenRAG chunk search over ONLY the caller's corpus: every query
     is server-side filtered to the scope's document names (each name
-    carries its doc-id prefix), then post-filtered again here."""
+    carries its doc-id prefix), then post-filtered again here. Chunks
+    from all queries are merged (deduped, best score kept) so a
+    reformulated query and the raw message both contribute."""
     scope_key, scope_prefix = authorize_scope(user, org_id)
     try:
         records = org_service().list_uploads(scope_key)
@@ -144,46 +198,41 @@ def search_snippets(query: str, user: dict, org_id: str | None, page_size: int =
         by_name[name] = (r["filename"], prefix)
     if not by_name:
         return []
-    resp = requests.post(
-        f"{OPENRAG_URL}/search",
-        json={
-            "query": query,
-            "filters": {"filename": sorted(by_name)},
-            "limit": 15,
-        },
-        timeout=30,
-    )
-    if resp.status_code != 200:
-        raise RuntimeError(f"Search backend: {resp.text[:200]}")
-    data = resp.json()
-    chunks = data if isinstance(data, list) else data.get("results", [])
+    merged: dict = {}  # (openrag name, text head) -> (score, name, text)
+    for query in queries:
+        for chunk in _openrag_chunks(query, sorted(by_name)):
+            name = chunk.get("filename", "")
+            if name not in by_name:
+                continue  # another corpus's document - never used for grounding
+            text = clean_snippet(chunk.get("text", ""))
+            if not text:
+                continue
+            key = (name, text[:160])
+            score = chunk.get("score", 0)
+            if key not in merged or score > merged[key][0]:
+                merged[key] = (score, name, text)
     grouped: dict[str, dict] = {}
-    order: list[str] = []
-    for chunk in chunks:
-        name = chunk.get("filename", "")
-        if name not in by_name:
-            continue  # another corpus's document - never used for grounding
-        if name not in grouped:
-            title, prefix = by_name[name]
-            grouped[name] = {
-                "title": title,
-                "snippets": [],
-                "scope": prefix,
-                "_score": chunk.get("score", 0),
-            }
-            order.append(name)
-        entry = grouped[name]
-        entry["_score"] = max(entry["_score"], chunk.get("score", 0))
-        text = clean_snippet(chunk.get("text", ""))
-        if text and len(entry["snippets"]) < 4:
+    for score, name, text in sorted(merged.values(), key=lambda v: -v[0]):
+        title, prefix = by_name[name]
+        entry = grouped.setdefault(
+            name, {"title": title, "snippets": [], "scope": prefix, "_score": score}
+        )
+        entry["_score"] = max(entry["_score"], score)
+        if len(entry["snippets"]) < 8:
             entry["snippets"].append(text)
-    order.sort(key=lambda n: -grouped[n]["_score"])
+    order = sorted(grouped, key=lambda n: -grouped[n]["_score"])
     out = []
+    budget = 24  # total snippets across all documents in the answer context
     for name in order[:page_size]:
         entry = grouped[name]
         entry.pop("_score", None)
-        if entry["snippets"]:
-            out.append(entry)
+        if not entry["snippets"]:
+            continue
+        entry["snippets"] = entry["snippets"][:budget]
+        budget -= len(entry["snippets"])
+        out.append(entry)
+        if budget <= 0:
+            break
     return out
 
 
@@ -505,8 +554,13 @@ def _handle_message(params: dict, user: dict) -> dict:
     context_id = msg.get("contextId") or uuid.uuid4().hex
     metadata = msg.get("metadata") or {}
     org_id = metadata.get("orgId") or None
-    sources = search_snippets(text, user, org_id)
     history = _history.setdefault(context_id, [])
+    queries = []
+    rewritten = rewrite_query(text, history)
+    if rewritten and rewritten.lower() != text.lower():
+        queries.append(rewritten)
+    queries.append(text)
+    sources = search_snippets(queries, user, org_id)
     answer = model_answer(text, sources, history)
     history.append({"q": text, "a": answer})
     del history[:-6]

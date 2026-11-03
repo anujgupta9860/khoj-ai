@@ -67,6 +67,8 @@ class Resp:
 def fake_post(url, json=None, headers=None, timeout=None):
     calls.append((url, json))
     if "api.openai.com" in url:
+        if "Rewrite the user's latest message" in (json or {}).get("messages", [{}])[0].get("content", ""):
+            return Resp({"choices": [{"message": {"content": "pump warranty years coverage"}}]})
         return Resp({"choices": [{"message": {"content": "Grounded answer [1]."}}]})
     # OpenRAG chunk search
     return Resp({
@@ -121,6 +123,10 @@ assert result["contextId"]
 # and the answer came from the configured OpenAI model
 from urllib.parse import urlsplit
 search_calls = [j for u, j in calls if urlsplit(u).path == "/search"]
+# retrieval runs BOTH the model-rewritten query and the raw message, merged
+search_queries = [j["query"] for j in search_calls]
+assert "pump warranty years coverage" in search_queries, search_queries
+assert "What is the warranty?" in search_queries, search_queries
 assert search_calls and search_calls[-1]["filters"] == {
     "filename": sorted([OPENRAG_NAME, GLOBAL_NAME])}, search_calls
 model_calls = [j for u, j in calls if "api.openai.com" in u]
