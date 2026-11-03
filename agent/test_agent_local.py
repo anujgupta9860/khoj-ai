@@ -65,6 +65,7 @@ class Resp:
 
 
 RETRY_PROBE = {"armed": False, "answers": 0}
+LOOP_PROBE = {"armed": False, "answers": 0}
 
 
 def fake_post(url, json=None, headers=None, timeout=None):
@@ -72,6 +73,16 @@ def fake_post(url, json=None, headers=None, timeout=None):
     if "api.openai.com" in url:
         if "Rewrite the user's latest message" in (json or {}).get("messages", [{}])[0].get("content", ""):
             return Resp({"choices": [{"message": {"content": "pump warranty years coverage"}}]})
+        if LOOP_PROBE["armed"]:
+            LOOP_PROBE["answers"] += 1
+            if LOOP_PROBE["answers"] == 1:
+                return Resp({"choices": [{"message": {"content": None, "tool_calls": [
+                    {"id": "call-1", "type": "function", "function": {
+                        "name": "search_documents",
+                        "arguments": "{\"query\": \"pump warranty years\"}",
+                    }},
+                ]}}]})
+            return Resp({"choices": [{"message": {"content": "Loop answer [1]."}}]})
         if RETRY_PROBE["armed"]:
             RETRY_PROBE["answers"] += 1
             if RETRY_PROBE["answers"] == 1:
@@ -183,6 +194,28 @@ assert RETRY_PROBE["answers"] == 2, RETRY_PROBE
 RETRY_PROBE["armed"] = False
 calls.clear()
 
+# the OpenRAG-style loop: model calls search_documents, then answers
+LOOP_PROBE["armed"] = True
+calls.clear()
+r = client.post("/", json={
+    "jsonrpc": "2.0", "id": 32, "method": "message/send",
+    "params": {"message": {
+        "kind": "message", "role": "user", "messageId": "m-loop",
+        "parts": [{"kind": "text", "text": "Dig deeper on the warranty"}],
+    }},
+}, headers=H)
+assert r.status_code == 200, r.text
+loop_result = r.json()["result"]
+assert "Loop answer" in loop_result["parts"][0]["text"], loop_result
+tool_searches = [
+    j for u, j in calls
+    if "openrag" in u and (j or {}).get("query") == "pump warranty years"
+]
+assert tool_searches, calls
+assert LOOP_PROBE["answers"] == 2, LOOP_PROBE
+LOOP_PROBE["armed"] = False
+calls.clear()
+
 # same context keeps history (second turn answers too)
 r = client.post("/", json={
     "jsonrpc": "2.0", "id": 3, "method": "message/send",
@@ -287,12 +320,12 @@ agent_main.fetch_document_text = original_fetch
 
 # no API key configured -> the model path is skipped, extractive answers
 agent_main.OPENAI_API_KEY = ""
-ans = agent_main.model_answer(
+ans, ans_extra = agent_main.model_answer(
     "warranty?",
     [{"title": "doc.md", "snippets": ["The pump warranty is 2 years."], "scope": "users/user-123"}],
     [],
 )
-assert "extractive mode" in ans, ans
+assert "extractive mode" in ans and ans_extra == [], ans
 agent_main.OPENAI_API_KEY = "test-key"
 
 print("ALL AGENT TESTS PASSED")

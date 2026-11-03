@@ -15,6 +15,7 @@ do the same.
 
 import html
 import io
+import json
 import os
 import re
 import time
@@ -162,12 +163,12 @@ def rewrite_query(question: str, history: list) -> str | None:
         return None
 
 
-def search_snippets(queries: list, user: dict, org_id: str | None, page_size: int = 6) -> list:
-    """OpenRAG chunk search over ONLY the caller's corpus: every query
-    is server-side filtered to the scope's document names (each name
-    carries its doc-id prefix), then post-filtered again here. Chunks
-    from all queries are merged (deduped, best score kept) so a
-    reformulated query and the raw message both contribute."""
+
+def _corpus_names(user: dict, org_id: str | None) -> dict:
+    """OpenRAG filename -> (display title, GCS scope prefix) for every
+    document the caller may search: their scope's uploads plus the
+    global corpus. This map IS the corpus boundary - retrieval code
+    post-filters every chunk against it."""
     scope_key, scope_prefix = authorize_scope(user, org_id)
     try:
         records = org_service().list_uploads(scope_key)
@@ -196,6 +197,99 @@ def search_snippets(queries: list, user: dict, org_id: str | None, page_size: in
             else scope_prefix
         )
         by_name[name] = (r["filename"], prefix)
+    return by_name
+
+
+def _tool_search(query: str, user: dict, org_id: str | None, full_text_seen: set):
+    """The search_documents tool: one scoped OpenRAG search, grouped
+    by document. A small document is returned as full text the first
+    time it surfaces (form-like documents chunk badly); later rounds
+    return its chunks. Returns (result_text, [titles])."""
+    by_name = _corpus_names(user, org_id)
+    if not by_name:
+        return "No documents are available to search.", []
+    grouped: dict = {}
+    for chunk in _openrag_chunks(query, sorted(by_name), limit=30):
+        name = chunk.get("filename", "")
+        if name not in by_name:
+            continue  # another corpus's document - never used
+        text = clean_snippet(chunk.get("text", ""))
+        if not text:
+            continue
+        title, prefix = by_name[name]
+        entry = grouped.setdefault(
+            name, {"title": title, "prefix": prefix, "snips": [], "score": 0}
+        )
+        entry["score"] = max(entry["score"], chunk.get("score", 0))
+        if len(entry["snips"]) < 6:
+            entry["snips"].append(text)
+    if not grouped:
+        return "No matching passages found.", []
+    blocks, titles = [], []
+    for name, entry in sorted(grouped.items(), key=lambda kv: -kv[1]["score"])[:4]:
+        titles.append(entry["title"])
+        full = None
+        if name not in full_text_seen:
+            try:
+                full = fetch_document_text(entry["prefix"], entry["title"])
+            except Exception:
+                full = None
+            if full and len(full) <= 20000:
+                full_text_seen.add(name)
+                blocks.append(f"[{entry['title']} - full document]\n{full}")
+                continue
+        blocks.append(f"[{entry['title']}]\n" + "\n".join(entry["snips"]))
+    return "\n\n".join(blocks)[:16000], titles
+
+
+_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_documents",
+            "description": (
+                "Search the user's documents for passages relevant to a "
+                "keyword query. Use it when the excerpts already provided "
+                "are not enough - for example to find specific fields, "
+                "labels, codes or amounts."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Keyword search query",
+                    }
+                },
+                "required": ["query"],
+            },
+        },
+    }
+]
+
+
+def _chat_completion(messages: list, tools: list | None = None) -> dict:
+    payload = {"model": OPENAI_MODEL, "messages": messages, "temperature": 0.2}
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
+    resp = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        json=payload,
+        headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+        timeout=45,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(resp.text[:200])
+    return resp.json()["choices"][0]["message"]
+
+def search_snippets(queries: list, user: dict, org_id: str | None, page_size: int = 6) -> list:
+    """OpenRAG chunk search over ONLY the caller's corpus: every query
+    is server-side filtered to the scope's document names (each name
+    carries its doc-id prefix), then post-filtered again here. Chunks
+    from all queries are merged (deduped, best score kept) so a
+    reformulated query and the raw message both contribute."""
+    by_name = _corpus_names(user, org_id)
     if not by_name:
         return []
     merged: dict = {}  # (openrag name, text head) -> (score, name, text)
@@ -487,17 +581,23 @@ def _looks_like_refusal(text: str) -> bool:
     return any(m in low for m in _REFUSAL_MARKERS)
 
 
-def model_answer(question: str, sources: list, history: list) -> str:
-    """Ground an OpenAI answer on the retrieved chunks. Falls back to
-    an extractive answer when no key is configured or the model call
-    is unavailable, so chat never hard-fails."""
-    if not sources:
+def model_answer(question: str, sources: list, history: list,
+                 user: dict | None = None, org_id: str | None = None):
+    """Ground an OpenAI answer on the caller's documents, the way
+    OpenRAG's own chat does: the model starts from the retrieved
+    excerpts and may call search_documents for more passages before
+    answering (Khoj's corpus filtering is enforced inside the tool -
+    it can only ever search the caller's own scope plus the global
+    corpus). Returns (answer_text, extra_titles_from_tool_searches).
+    Falls back to an extractive answer when no key is configured or
+    the model calls fail, so chat never hard-fails."""
+    if not sources and user is None:
         return (
             "I couldn't find anything about that in the selected documents. "
             "Try different words, or upload the document that covers it."
-        )
+        ), []
     if not OPENAI_API_KEY:
-        return extractive_answer(question, sources)
+        return extractive_answer(question, sources), []
     excerpts = "\n\n".join(
         f"[{i + 1}] {s['title']}\n" + "\n".join(s["snippets"])
         for i, s in enumerate(sources)
@@ -505,56 +605,85 @@ def model_answer(question: str, sources: list, history: list) -> str:
     history_text = "\n".join(f"User: {h['q']}\nAssistant: {h['a']}" for h in history[-4:])
     prompt = (
         "You are Khoj, a document assistant. Answer the question using ONLY "
-        "the document excerpts below. Cite excerpts inline like [1], [2]. "
+        "the document excerpts below and any passages you retrieve with "
+        "search_documents. Cite excerpts inline like [1], [2]. "
         "Some excerpts are complete documents: read them in full before "
         "concluding anything is missing. Forms and statements often list "
         "field names and their amounts separately, sometimes in matching "
-        "order - pair them up and answer from the values you find. Only "
+        "order - pair them up and answer from the values you find. If the "
+        "excerpts are not enough, call search_documents with different "
+        "keywords (field labels, codes, synonyms) before giving up. Only "
         "say the information is not there if it is truly absent from every "
-        "excerpt. Be concise and direct.\n\n"
+        "excerpt and search result. Be concise and direct.\n\n"
         f"Conversation so far:\n{history_text or '(none)'}\n\n"
-        f"Document excerpts:\n{excerpts}\n\nQuestion: {question}"
+        f"Document excerpts:\n{excerpts or '(none yet - search first)'}\n\n"
+        f"Question: {question}"
     )
-
-    def _ask(p: str) -> str:
-        resp = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            json={
-                "model": OPENAI_MODEL,
-                "messages": [{"role": "user", "content": p}],
-                "temperature": 0.2,
-            },
-            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-            timeout=45,
-        )
-        if resp.status_code != 200:
-            raise RuntimeError(resp.text[:200])
-        return resp.json()["choices"][0]["message"]["content"].strip()
-
+    messages = [{"role": "user", "content": prompt}]
+    extra_titles: list = []
+    full_text_seen: set = set()
+    text = ""
     try:
-        text = _ask(prompt)
+        for _ in range(3):
+            msg = _chat_completion(messages, tools=_TOOLS if user else None)
+            calls = msg.get("tool_calls") or []
+            if not calls:
+                text = (msg.get("content") or "").strip()
+                break
+            messages.append({
+                "role": "assistant",
+                "content": msg.get("content"),
+                "tool_calls": calls,
+            })
+            for call in calls:
+                fn = call.get("function") or {}
+                if fn.get("name") != "search_documents" or user is None:
+                    result = "That tool is unavailable."
+                else:
+                    try:
+                        args = json.loads(fn.get("arguments") or "{}")
+                    except Exception:
+                        args = {}
+                    result, titles = _tool_search(
+                        str(args.get("query") or question),
+                        user, org_id, full_text_seen,
+                    )
+                    for t in titles:
+                        if t not in extra_titles:
+                            extra_titles.append(t)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.get("id"),
+                    "content": result,
+                })
+        if not text:
+            msg = _chat_completion(messages)
+            text = (msg.get("content") or "").strip()
         if not text:
             raise RuntimeError("Model returned an empty answer")
         if _looks_like_refusal(text):
             # One firmer pass: gpt-4o-mini refuses too eagerly on
             # form-like documents whose values sit apart from their
             # labels, even when handed the full text (diagnosed live
-            # 2026-11-03). OpenRAG's own chat avoids this by iterating;
-            # this retry is Khoj's equivalent second look.
-            retry = _ask(
-                prompt
-                + "\n\nRe-read every excerpt completely, including any "
-                "complete document text. Pair field-name lists with "
-                "amount lists (in order when the document presents them "
-                "that way) and answer with the specific figures if they "
-                "appear anywhere in the excerpts."
-            )
+            # 2026-11-03).
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Re-read every excerpt and search result completely, "
+                    "including any complete document text. Pair field-name "
+                    "lists with amount lists (in order when the document "
+                    "presents them that way) and answer with the specific "
+                    "figures if they appear anywhere."
+                ),
+            })
+            msg = _chat_completion(messages)
+            retry = (msg.get("content") or "").strip()
             if retry and not _looks_like_refusal(retry):
-                return retry
-        return text
+                text = retry
+        return text, extra_titles
     except Exception as e:
         print(f"model_answer: falling back to extractive mode: {e!r}", flush=True)
-    return extractive_answer(question, sources)
+    return extractive_answer(question, sources), []
 
 
 AGENT_CARD = {
@@ -615,7 +744,11 @@ def _handle_message(params: dict, user: dict) -> dict:
         queries.append(rewritten)
     queries.append(text)
     sources = search_snippets(queries, user, org_id)
-    answer = model_answer(text, sources, history)
+    answer, extra_titles = model_answer(text, sources, history, user, org_id)
+    source_titles = [s["title"] for s in sources]
+    for t in extra_titles:
+        if t not in source_titles:
+            source_titles.append(t)
     history.append({"q": text, "a": answer})
     del history[:-6]
     return {
@@ -624,7 +757,7 @@ def _handle_message(params: dict, user: dict) -> dict:
         "role": "agent",
         "contextId": context_id,
         "parts": [{"kind": "text", "text": answer}],
-        "metadata": {"sources": [s["title"] for s in sources]},
+        "metadata": {"sources": source_titles},
     }
 
 
