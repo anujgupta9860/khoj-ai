@@ -1,0 +1,30 @@
+image:
+  repository: us-central1-docker.pkg.dev/innovation-lab-2026/khoj/khoj-agent
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+gcp:
+  project: innovation-lab-2026
+  engineId: "khoj-search"
+  datastoreId: "khoj-corpus_1793659971762"
+  vertexLocation: us-central1
+  geminiModel: "gemini-2.5-flash"
+
+workloadIdentity:
+  # Same app GSA as the web service (Discovery Engine + Firestore +
+  # Firebase Auth + Vertex AI user for Gemini)
+  gsaEmail: ""
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  requests:
+    cpu: "250m"
+    memory: "512Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"

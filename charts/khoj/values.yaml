@@ -17,6 +17,10 @@ firebase:
   apiKey: "AIzaSyBj_VxGuj_iVjrnnjzS2g8S0zRfg4ItYX4"   # Firebase web config (public identifiers)
   authDomain: "innovation-lab-2026.firebaseapp.com"
 
+# A2A chat agent (in-cluster address of the khoj-agent service)
+agent:
+  url: "http://khoj-agent"
+
 workloadIdentity:
   # Google service account the pods act as (needs discoveryengine viewer +
   # editor for imports, storage object admin on the bucket, firebase auth)

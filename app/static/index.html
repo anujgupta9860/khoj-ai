@@ -71,6 +71,18 @@
     <div id="summary" class="summary hidden"></div>
     <div id="results"></div>
 
+    <!-- Chat (A2A agent) -->
+    <div id="chatbox" class="card" style="margin-top:28px">
+      <h3 style="margin-top:0">Chat with your documents</h3>
+      <div id="chatlog" style="display:flex; flex-direction:column; gap:8px; margin-bottom:10px"></div>
+      <div class="row">
+        <input id="chatinput" type="text" placeholder="Ask a question…" style="flex:1" />
+        <button id="chatsend">Ask</button>
+      </div>
+      <div class="err" id="chaterr"></div>
+      <p class="muted" style="margin-bottom:0">Powered by the Khoj A2A agent — answers are grounded in the corpus selected above.</p>
+    </div>
+
     <!-- Your documents -->
     <div id="uploadbox" class="card" style="margin-top:28px">
       <h3>Your documents</h3>
@@ -425,7 +437,7 @@ $("savebranding").onclick = async () => {
   if (resp.ok) await loadOrgs();
 };
 
-$("corpus").onchange = () => { loadDocs(); refreshMemberBox(); };
+$("corpus").onchange = () => { loadDocs(); refreshMemberBox(); chatContext = null; $("chatlog").innerHTML = ""; };
 
 $("createbiz").onclick = async () => {
   const name = $("bizname").value.trim();
@@ -504,6 +516,35 @@ async function doSearch() {
 }
 $("go").onclick = doSearch;
 $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
+
+let chatContext = null;
+function chatAdd(who, body) {
+  const div = document.createElement("div");
+  const b = document.createElement("b");
+  b.textContent = who + ": ";
+  div.appendChild(b);
+  div.appendChild(document.createTextNode(body));
+  div.style.whiteSpace = "pre-wrap";
+  $("chatlog").appendChild(div);
+}
+async function doChat() {
+  const text = $("chatinput").value.trim();
+  if (!text) return;
+  $("chaterr").textContent = "";
+  chatAdd("You", text);
+  $("chatinput").value = "";
+  const resp = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + (await token()) },
+    body: JSON.stringify({ message: text, contextId: chatContext, orgId: currentOrg() }),
+  });
+  if (!resp.ok) { $("chaterr").textContent = "Chat failed: " + (await resp.text()); return; }
+  const data = await resp.json();
+  chatContext = data.contextId;
+  chatAdd("Khoj", data.reply + (data.sources && data.sources.length ? "\nSources: " + data.sources.join(", ") : ""));
+}
+$("chatsend").onclick = doChat;
+$("chatinput").addEventListener("keydown", (e) => { if (e.key === "Enter") doChat(); });
 
 $("upload").onclick = async () => {
   const f = $("docfile").files[0];

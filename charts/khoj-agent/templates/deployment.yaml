@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: khoj-agent
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: khoj-agent
+  template:
+    metadata:
+      labels:
+        app: khoj-agent
+    spec:
+      serviceAccountName: khoj-agent
+      containers:
+        - name: khoj-agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: GCP_PROJECT
+              value: {{ .Values.gcp.project }}
+            - name: KHOJ_ENGINE_ID
+              value: {{ .Values.gcp.engineId }}
+            - name: KHOJ_DATASTORE_ID
+              value: {{ .Values.gcp.datastoreId }}
+            - name: VERTEX_LOCATION
+              value: {{ .Values.gcp.vertexLocation }}
+            - name: GEMINI_MODEL
+              value: {{ .Values.gcp.geminiModel }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10

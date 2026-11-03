@@ -440,4 +440,39 @@ assert m["searches"]["total"] >= 3 and m["searches"]["uniqueUsers"] >= 1
 assert m["searches"]["zeroResultRate"] == 1.0  # canned backend returns 0 results
 CURRENT["user"] = USER
 
+# --- chat: the web service as an A2A client of the agent --------------------
+os.environ["KHOJ_AGENT_URL"] = "http://khoj-agent"
+agent_calls = []
+
+
+class AgentResp:
+    status_code = 200
+
+    def json(self):
+        return {
+            "jsonrpc": "2.0", "id": 1,
+            "result": {
+                "kind": "message", "role": "agent", "contextId": "ctx-42",
+                "parts": [{"kind": "text", "text": "Grounded answer."}],
+                "metadata": {"sources": ["doc.md"]},
+            },
+        }
+
+
+def agent_post(url, json=None, headers=None, timeout=None):
+    agent_calls.append((url, json, headers))
+    return AgentResp()
+
+
+_real_post = main.requests.post
+main.requests.post = agent_post
+r = client.post("/api/chat", json={"message": "what is in doc.md?"}, headers=H)
+assert r.status_code == 200, r.text
+assert r.json()["reply"] == "Grounded answer." and r.json()["contextId"] == "ctx-42"
+rpc_sent = agent_calls[0][1]
+assert rpc_sent["method"] == "message/send"
+assert rpc_sent["params"]["message"]["parts"][0]["text"] == "what is in doc.md?"
+assert agent_calls[0][2]["Authorization"] == "Bearer whatever"  # caller token forwarded
+main.requests.post = _real_post
+
 print("ALL LOCAL TESTS PASSED")

@@ -29,6 +29,7 @@ import json
 import os
 import re
 import time
+import uuid
 
 import requests
 from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
@@ -343,6 +344,73 @@ def me(authorization: str | None = Header(default=None)):
 def search(body: SearchBody, authorization: str | None = Header(default=None)):
     user = require_user(authorization)
     return run_search(body.query, user, org_id=body.orgId)
+
+
+class ChatBody(BaseModel):
+    message: str
+    contextId: str | None = None
+    orgId: str | None = None
+
+
+@app.post("/api/chat")
+def chat(body: ChatBody, authorization: str | None = Header(default=None)):
+    """Chat panel backend. The web service acts as an A2A client: it
+    sends a JSON-RPC message/send to the Khoj A2A agent (AgentCard at
+    <agent>/.well-known/agent-card.json) carrying the caller's Firebase
+    token, and returns the agent's reply."""
+    user = require_user(authorization)
+    agent_url = os.environ.get("KHOJ_AGENT_URL", "http://khoj-agent")
+    context_id = body.contextId or uuid.uuid4().hex
+    rpc = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "message/send",
+        "params": {
+            "message": {
+                "kind": "message",
+                "role": "user",
+                "messageId": uuid.uuid4().hex,
+                "contextId": context_id,
+                "parts": [{"kind": "text", "text": body.message}],
+                "metadata": {"orgId": body.orgId} if body.orgId else {},
+            }
+        },
+    }
+    started = time.monotonic()
+    try:
+        resp = requests.post(
+            agent_url + "/", json=rpc,
+            headers={"Authorization": authorization or ""}, timeout=60,
+        )
+        data = resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Chat agent unreachable: {e}")
+    if "error" in data:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Chat agent: {data['error'].get('message', 'error')}",
+        )
+    result = data.get("result", {})
+    text = " ".join(
+        p.get("text", "") for p in result.get("parts", []) if p.get("kind") == "text"
+    )
+    sources = (result.get("metadata") or {}).get("sources", [])
+    log_event(
+        kind="chat",
+        uid=user["uid"],
+        email=user.get("email", ""),
+        orgId=body.orgId,
+        query=body.message,
+        summary=text[:500],
+        results=len(sources),
+        latencyMs=int((time.monotonic() - started) * 1000),
+        source="chat",
+    )
+    return {
+        "reply": text,
+        "contextId": result.get("contextId") or context_id,
+        "sources": sources,
+    }
 
 
 @app.get("/api/documents")

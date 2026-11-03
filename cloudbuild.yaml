@@ -36,6 +36,18 @@ steps:
         && docker push $_REPO/openrag-backend:$SHORT_SHA
         && docker push $_REPO/openrag-backend:latest
 
+  # 2b. Build + push the A2A chat agent image (build context is the repo
+  #     root - the agent reuses app/orgs.py).
+  - name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - >
+        docker build -f agent/Dockerfile
+        -t $_REPO/khoj-agent:$SHORT_SHA -t $_REPO/khoj-agent:latest .
+        && docker push $_REPO/khoj-agent:$SHORT_SHA
+        && docker push $_REPO/khoj-agent:latest
+
   # 3. Write a static-token kubeconfig into the shared workspace. (The
   #    kubeconfig from `gcloud get-credentials` shells out to the
   #    gke-gcloud-auth-plugin binary, which the helm builder image does
@@ -76,9 +88,20 @@ steps:
            --set, "workloadIdentity.gsaEmail=khoj-app@innovation-lab-2026.iam.gserviceaccount.com",
            --wait, --timeout, 5m]
 
+  # 5. Deploy the A2A chat agent chart.
+  - name: alpine/helm:3.16
+    env: ["KUBECONFIG=/workspace/kubeconfig"]
+    args: [upgrade, --install, khoj-agent, ./charts/khoj-agent,
+           --set, "image.repository=$_REPO/khoj-agent",
+           --set, "image.tag=$SHORT_SHA",
+           --set, "workloadIdentity.gsaEmail=khoj-app@innovation-lab-2026.iam.gserviceaccount.com",
+           --wait, --timeout, 5m]
+
 images:
   - "$_REPO/khoj:$SHORT_SHA"
   - "$_REPO/khoj:latest"
+  - "$_REPO/khoj-agent:$SHORT_SHA"
+  - "$_REPO/khoj-agent:latest"
   - "$_REPO/openrag-backend:$SHORT_SHA"
   - "$_REPO/openrag-backend:latest"
 

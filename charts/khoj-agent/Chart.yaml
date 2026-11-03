@@ -1,0 +1,6 @@
+apiVersion: v2
+name: khoj-agent
+description: Khoj.ai A2A agent - conversational Q&A over Khoj corpora (AgentCard + message/send, Vertex AI Search grounding, Gemini answers)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
