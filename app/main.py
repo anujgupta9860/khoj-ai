@@ -270,6 +270,12 @@ def run_search(
         for name in order[:page_size]:
             entry = grouped[name]
             entry.pop("_score", None)
+            if not entry["snippets"]:
+                # OpenRAG returns shell hits (filename, empty text) for
+                # below-relevance matches; a result with no excerpt is
+                # not a result. (Seen live 2026-11-03: an unrelated query
+                # listed the caller's own docs with empty snippets.)
+                continue
             results.append(entry)
     out = {"summary": "", "totalSize": len(results), "results": results}
     log_event(

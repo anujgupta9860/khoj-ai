@@ -206,6 +206,12 @@ def openrag_post(url, json=None, files=None, headers=None, timeout=None):
         return Resp({"task_id": "task-1"}, status=202)
     if path == "/search":
         search_payloads.append(json)
+        if (json or {}).get("query") == "zzz-no-match":
+            # OpenRAG shell hits: filename present, text empty
+            return Resp({"results": [
+                {"filename": MINE_NAME, "text": "", "score": 0.1},
+                {"filename": GLOBAL_NAME, "text": "", "score": 0.05},
+            ]})
         results = [
             {"filename": MINE_NAME, "text": "mine <b>text</b>&nbsp;here", "score": 2.0},
             {"filename": GLOBAL_NAME, "text": "global handbook", "score": 0.5},
@@ -277,9 +283,14 @@ assert docs[new_doc]["title"] == "status.md", docs
 # are dropped even when the engine returns them
 r = client.post("/api/search", json={"query": "q"}, headers=H)
 assert [x["title"] for x in r.json()["results"]] == ["mine.md", "global.md"]
+
 assert r.json()["results"][0]["snippets"] == ["mine text here"]  # markup/entities stripped
 assert sorted(search_payloads[-1]["filters"]["filename"]) == sorted(
     [MINE_NAME, STATUS_NAME, GLOBAL_NAME])
+
+# shell hits (filename with empty excerpt) are not results
+r = client.post("/api/search", json={"query": "zzz-no-match"}, headers=H)
+assert r.json()["totalSize"] == 0 and r.json()["results"] == [], r.json()
 r = client.post("/api/search", json={"query": "q", "orgId": ORG_ID}, headers=H)
 assert [x["title"] for x in r.json()["results"]] == ["biz.md", "global.md"]
 assert sorted(search_payloads[-1]["filters"]["filename"]) == sorted(
