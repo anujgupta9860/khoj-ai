@@ -14,10 +14,13 @@ do the same.
 """
 
 import html
+import io
 import os
 import re
 import time
+import urllib.parse
 import uuid
+import zipfile
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
@@ -41,6 +44,7 @@ from app.orgs import FirestoreOrgService
 PROJECT = os.environ.get("GCP_PROJECT", "innovation-lab-2026")
 ENGINE_ID = os.environ.get("KHOJ_ENGINE_ID", "khoj-search")
 DATASTORE_ID = os.environ.get("KHOJ_DATASTORE_ID", "")
+BUCKET = os.environ.get("KHOJ_BUCKET", "khoj-ai-corpus-innovation-lab")
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
@@ -157,10 +161,235 @@ def search_snippets(query: str, user: dict, org_id: str | None, page_size: int =
             out.append({
                 "title": struct.get("title") or derived.get("title") or doc.get("id", ""),
                 "snippets": snippets,
+                # Corpus scope value (uid or org id): the source file
+                # lives in GCS at {scope}/{title} (the web service's
+                # upload layout), which the extractive path reads.
+                "scope": want,
             })
         if len(out) >= page_size:
             break
     return out
+
+
+_STOPWORDS = {
+    "what", "all", "the", "and", "for", "are", "has", "have", "does", "did",
+    "with", "from", "this", "that", "about", "into", "your", "their", "there",
+    "which", "when", "where", "who", "how", "why", "can", "could", "would",
+    "should", "tell", "show", "give", "list", "find", "much", "many",
+}
+_WORD_RE = re.compile(r"[a-z0-9][a-z0-9+.#-]*[a-z0-9]|[a-z0-9]")
+_TEXT_CACHE: dict = {}
+_CACHE_LIMIT = 64
+
+
+def _query_terms(question: str) -> set:
+    terms = set()
+    for w in _WORD_RE.findall((question or "").lower()):
+        if len(w) < 3 or w in _STOPWORDS:
+            continue
+        terms.add(w)
+        if w.endswith("s") and len(w) > 3:
+            terms.add(w[:-1])
+    return terms
+
+
+def _score_text(text: str, terms: set) -> int:
+    words = _WORD_RE.findall(text.lower())
+    if not words or not terms:
+        return 0
+    present = set(words)
+    matched = terms.intersection(present)
+    hits = sum(1 for w in words if w in terms)
+    return len(matched) * 12 + min(hits, 24)
+
+
+def _extract_docx(raw: bytes) -> str | None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            xml = zf.read("word/document.xml").decode("utf-8", errors="replace")
+    except Exception:
+        return None
+    xml = re.sub(r"</w:p>", "\n", xml)
+    xml = re.sub(r"<w:tab[^>]*/>", "\t", xml)
+    xml = _TAG_RE.sub("", xml)
+    return html.unescape(xml)
+
+
+def _extract_pdf(raw: bytes) -> str | None:
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(raw))
+        return "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception:
+        return None
+
+
+def extract_text(filename: str, raw: bytes) -> str | None:
+    """Extract searchable text from an uploaded file's bytes. Supported:
+    plain text formats directly, HTML by block-aware tag stripping,
+    DOCX via its XML (stdlib only), PDF via pypdf. Anything else returns
+    None and the caller falls back to Vertex snippets for that file."""
+    ext = os.path.splitext(filename or "")[1].lower()
+    if ext == ".docx":
+        return _extract_docx(raw)
+    if ext == ".pdf":
+        return _extract_pdf(raw)
+    try:
+        text = raw.decode("utf-8", errors="replace")
+    except Exception:
+        return None
+    if ext in (".html", ".htm"):
+        text = re.sub(r"(?i)</(p|div|li|tr|h[1-6])>|<br\s*/?>", "\n", text)
+        text = _TAG_RE.sub(" ", text)
+        text = html.unescape(text)
+    return text
+
+
+def fetch_document_text(scope: str, filename: str) -> str | None:
+    """Read the caller's own uploaded file from the corpus bucket and
+    return its extracted text. The object layout ({scope}/{filename})
+    and bucket are the web service's upload contract; the agent's
+    Workload Identity carries storage access to that bucket. A small
+    in-process cache avoids refetching on every chat turn (a re-upload
+    under the same name is picked up on pod restart)."""
+    if not scope or not filename:
+        return None
+    cache_key = (scope, filename)
+    if cache_key in _TEXT_CACHE:
+        return _TEXT_CACHE[cache_key]
+    obj = urllib.parse.quote(f"{scope}/{filename}", safe="")
+    url = f"https://storage.googleapis.com/storage/v1/b/{BUCKET}/o/{obj}?alt=media"
+    try:
+        resp = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {gcp_token()}"},
+            timeout=(5, 20),
+        )
+        if resp.status_code != 200 or len(resp.content) > 12_000_000:
+            return None
+        text = extract_text(filename, resp.content)
+    except Exception as e:
+        print(f"fetch_document_text({filename}): {e!r}", flush=True)
+        return None
+    if text:
+        if len(_TEXT_CACHE) >= _CACHE_LIMIT:
+            _TEXT_CACHE.pop(next(iter(_TEXT_CACHE)))
+        _TEXT_CACHE[cache_key] = text[:300_000]
+    return text
+
+
+def _looks_like_heading(block: str, next_block: str | None) -> bool:
+    if len(block) > 90:
+        return False
+    if block.endswith(":"):
+        return True
+    letters = [c for c in block if c.isalpha()]
+    if letters and sum(1 for c in letters if c.isupper()) / len(letters) > 0.75:
+        return len(block) >= 3
+    if next_block and len(next_block) > max(120, int(len(block) * 1.6)):
+        return not block.endswith((".", ",", ";", "!", "?"))
+    return False
+
+
+def _sections(text: str) -> list[tuple[str, str]]:
+    lines = [line.strip() for line in (text or "").splitlines()]
+    blocks = [line for line in lines if line]
+    if not blocks:
+        return []
+    sections: list[tuple[str, str]] = []
+    heading = ""
+    current: list[str] = []
+    current_len = 0
+
+    def flush():
+        if current:
+            sections.append((heading, "\n".join(current)))
+
+    for index, block in enumerate(blocks):
+        next_block = blocks[index + 1] if index + 1 < len(blocks) else None
+        if _looks_like_heading(block, next_block) and current_len >= 30:
+            flush()
+            heading = block
+            current = []
+            current_len = 0
+            continue
+        if _looks_like_heading(block, next_block) and not current:
+            heading = block
+            continue
+        current.append(block)
+        current_len += len(block) + 1
+        if current_len >= 1800:
+            flush()
+            heading = ""
+            current = []
+            current_len = 0
+    flush()
+    return sections
+
+
+def pick_passages(text: str, question: str, budget: int = 2400) -> tuple[str, int]:
+    """Return the most relevant complete section(s), not snippets.
+    Sections are heading + following text, scored by distinct query
+    terms and density. Returned in document order within budget."""
+    terms = _query_terms(question)
+    if not terms:
+        return "", 0
+    scored = []
+    for pos, (heading, body) in enumerate(_sections(text)):
+        full = (heading + "\n" + body).strip() if heading else body
+        score = _score_text(full, terms)
+        if score > 0:
+            scored.append((pos, score, full))
+    if not scored:
+        return "", 0
+    best = max(score for _, score, _ in scored)
+    chosen = []
+    used = 0
+    for _, score, full in sorted(scored):
+        if used and used + len(full) + 2 > budget:
+            continue
+        chosen.append(full)
+        used += len(full) + 2
+        if used >= budget:
+            break
+    return "\n".join(chosen), best
+
+
+def extractive_answer(question: str, sources: list) -> str:
+    """Complete extractive answer: retrieve the actual source files
+    and quote the best full sections. Earlier version stitched Vertex's
+    ~200-character snippets (first document only, max 600 chars), which
+    produced visibly unfinished answers. Last-resort fallback still
+    uses snippets across sources if no file can be fetched/parsed."""
+    candidates: list[tuple[int, int, str, str]] = []
+    for index, source in enumerate(sources[:3]):
+        text = fetch_document_text(source.get("scope", ""), source.get("title", ""))
+        if not text:
+            continue
+        passages, best = pick_passages(text, question)
+        if passages:
+            candidates.append((index, best, source["title"], passages))
+    chunks: list[str] = []
+    if candidates:
+        top_best = max(best for _, best, _, _ in candidates)
+        for _, best, title, passages in sorted(candidates):
+            if chunks and best < top_best * 0.5:
+                continue
+            chunks.append(f"From {title}:\n{passages}")
+            if len(chunks) >= 2:
+                break
+    if not chunks:
+        chunks = [
+            f"From {s['title']}: " + " ".join(s["snippets"])[:800]
+            for s in sources if s.get("snippets")
+        ]
+    if not chunks:
+        return (
+            "I found matching documents, but could not extract readable "
+            "passages from them."
+            "\n\n(chat is running in extractive mode right now)"
+        )
+    return "\n\n".join(chunks) + "\n\n(chat is running in extractive mode right now)"
 
 
 def gemini_answer(question: str, sources: list, history: list) -> str:
@@ -198,11 +427,7 @@ def gemini_answer(question: str, sources: list, history: list) -> str:
         raise RuntimeError("Gemini returned an empty answer")
     except Exception as e:
         print(f"gemini_answer: falling back to extractive mode: {e!r}", flush=True)
-    first = sources[0]
-    return (
-        "From " + first["title"] + ": " + " ".join(first["snippets"])[:600]
-        + "\n\n(chat is running in extractive mode right now)"
-    )
+    return extractive_answer(question, sources)
 
 
 AGENT_CARD = {

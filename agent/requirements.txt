@@ -4,3 +4,4 @@ requests==2.32.*
 firebase-admin==6.*
 google-auth==2.*
 pydantic==2.*
+pypdf==5.*

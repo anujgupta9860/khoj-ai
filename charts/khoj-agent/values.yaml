@@ -11,6 +11,7 @@ gcp:
   datastoreId: "khoj-corpus_1793659971762"
   vertexLocation: us-central1
   geminiModel: "gemini-2.5-flash"
+  bucket: "khoj-ai-corpus-innovation-lab"
 
 gemini:
   # Optional k8s Secret holding GEMINI_API_KEY (created from Google

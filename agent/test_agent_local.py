@@ -146,6 +146,43 @@ assert "<b>" not in text and "&nbsp;" not in text, text
 assert "extractive mode" in text
 agent_main.requests.post = fake_post
 
+# --- Complete extractive passages (no LLM) ---
+import io
+import zipfile
+
+docx_buffer = io.BytesIO()
+with zipfile.ZipFile(docx_buffer, "w") as zf:
+    zf.writestr(
+        "word/document.xml",
+        """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:body>
+            <w:p><w:r><w:t>Anuj Gupta</w:t></w:r></w:p>
+            <w:p><w:r><w:t>TECHNICAL SKILLS</w:t></w:r></w:p>
+            <w:p><w:r><w:t>Java / J2EE, Spring Boot, Python, SQL, Docker, Kubernetes, and distributed systems design for resilient production services.</w:t></w:r></w:p>
+            <w:p><w:r><w:t>EXPERIENCE</w:t></w:r></w:p>
+            <w:p><w:r><w:t>Built payment services and internal engineering platforms.</w:t></w:r></w:p>
+          </w:body>
+        </w:document>""",
+    )
+resume_text = agent_main.extract_text("anujResume_2024.docx", docx_buffer.getvalue())
+assert "TECHNICAL SKILLS" in resume_text
+assert "distributed systems design for resilient production services" in resume_text
+passages, best = agent_main.pick_passages(resume_text, "What all skill Anuj Gupta has")
+assert best > 0
+assert "TECHNICAL SKILLS" in passages
+assert "distributed systems design for resilient production services" in passages
+
+original_fetch = agent_main.fetch_document_text
+agent_main.fetch_document_text = lambda scope, filename: resume_text if filename.endswith(".docx") else None
+full_answer = agent_main.extractive_answer(
+    "What all skill Anuj Gupta has",
+    [{"title": "anujResume_2024.docx", "snippets": ["partial"], "scope": "user-123"}],
+)
+assert "distributed systems design for resilient production services" in full_answer
+assert "extractive mode" in full_answer
+agent_main.fetch_document_text = original_fetch
+
 # --- Gemini endpoint selection (API key route vs Vertex route) ---
 agent_main.GEMINI_API_KEY = ""
 url, headers = agent_main.gemini_endpoint()

@@ -30,6 +30,8 @@ spec:
               value: {{ .Values.gcp.vertexLocation }}
             - name: GEMINI_MODEL
               value: {{ .Values.gcp.geminiModel }}
+            - name: KHOJ_BUCKET
+              value: {{ .Values.gcp.bucket }}
             {{- if .Values.gemini.secretName }}
             - name: GEMINI_API_KEY
               valueFrom:
