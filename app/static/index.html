@@ -31,8 +31,9 @@
   #searchbar { display:flex; gap: 10px; } #searchbar input { margin: 0; padding: 14px 16px; border-radius: 12px; font-size: 17px; }
   /* Floating chat widget */
   #chatfab { position: fixed; right: 20px; bottom: 20px; z-index: 40; width: 58px; height: 58px; border-radius: 50%; font-size: 25px; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 26px -6px #4f46e5aa; }
-  #chatpanel { position: fixed; top: 0; right: 0; z-index: 41; width: min(392px, 100vw); height: 100dvh; display: flex; flex-direction: column; background: light-dark(#fff, #17171d); border-left: 1px solid var(--line); box-shadow: -18px 0 44px -20px #0007; transform: translateX(105%); transition: transform .26s ease; }
-  #chatpanel.open { transform: translateX(0); }
+  #chatpanel { position: fixed; top: 0; right: 0; z-index: 41; width: min(392px, 100vw); height: 100dvh; display: flex; flex-direction: column; background: light-dark(#fff, #17171d); border-left: 1px solid var(--line); box-shadow: -18px 0 44px -20px #0007; transform: translateX(105%); transition: transform .26s ease, visibility .26s; visibility: hidden; pointer-events: none; }
+  #chatpanel.open { transform: translateX(0); visibility: visible; pointer-events: auto; }
+  #docfile { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
   #chathead { display:flex; align-items:flex-start; justify-content:space-between; gap: 10px; padding: 16px 18px 12px; border-bottom: 1px solid var(--line); }
   #chathead .t { font-size: 17px; font-weight: 700; }
   #chatclose { background: transparent; color: inherit; border: 0; box-shadow: none; font-size: 19px; padding: 2px 8px; }
@@ -97,6 +98,8 @@
       <h3>Your documents</h3>
       <p class="muted">Uploads go to the corpus selected above. Personal uploads are private to you; business uploads are shared with that business's members (owners and admins upload).</p>
       <div class="row">
+        <button id="pickfile" class="secondary" type="button">Choose file</button>
+        <span id="pickedname" class="muted">No file chosen</span>
         <input id="docfile" type="file" />
         <button id="upload">Upload</button>
       </div>
@@ -575,9 +578,14 @@ async function doChat() {
 $("chatsend").onclick = doChat;
 $("chatinput").addEventListener("keydown", (e) => { if (e.key === "Enter") doChat(); });
 
+$("pickfile").onclick = () => $("docfile").click();
+$("docfile").addEventListener("change", () => {
+  const f = $("docfile").files[0];
+  $("pickedname").textContent = f ? f.name : "No file chosen";
+});
 $("upload").onclick = async () => {
   const f = $("docfile").files[0];
-  if (!f) return;
+  if (!f) { $("uploadstatus").textContent = "Choose a file first."; return; }
   $("uploadstatus").textContent = "Uploading…";
   const fd = new FormData(); fd.append("file", f);
   const orgId = currentOrg();
