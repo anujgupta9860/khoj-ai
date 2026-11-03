@@ -12,6 +12,12 @@ gcp:
   vertexLocation: us-central1
   geminiModel: "gemini-2.5-flash"
 
+gemini:
+  # Optional k8s Secret holding GEMINI_API_KEY (created from Google
+  # Secret Manager -- never in values/git). When the secret is absent
+  # the agent falls back to the Vertex AI route.
+  secretName: "khoj-agent-secrets"
+
 workloadIdentity:
   # Same app GSA as the web service (Discovery Engine + Firestore +
   # Firebase Auth + Vertex AI user for Gemini)

@@ -1,5 +1,9 @@
 image: langflowai/openrag-frontend:latest
 backendUrl: http://openrag-backend:8000
+ingress:
+  enabled: true
+  host: ""            # empty = IP-only via LB address
+  staticIpName: ""    # GKE reserved static IP name, optional
 resources:
   requests: { cpu: "100m", memory: "256Mi" }
   limits: { cpu: "500m", memory: "512Mi" }

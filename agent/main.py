@@ -43,6 +43,30 @@ ENGINE_ID = os.environ.get("KHOJ_ENGINE_ID", "khoj-search")
 DATASTORE_ID = os.environ.get("KHOJ_DATASTORE_ID", "")
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+
+
+def gemini_endpoint():
+    """Where the chat model call goes: (url, headers).
+
+    With GEMINI_API_KEY set, the Gemini API (generativelanguage) is used.
+    innovation-lab-2026 returns publisher-model 404s on the Vertex path
+    for every model (verified 2026-11-02, incl. gemini-1.5-flash-002)
+    while its Gemini API key route works, so the agent prefers the key
+    route there. Without a key, Vertex AI with the pod's Workload
+    Identity token remains the default."""
+    if GEMINI_API_KEY:
+        return (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{GEMINI_MODEL}:generateContent",
+            {"x-goog-api-key": GEMINI_API_KEY},
+        )
+    return (
+        f"https://{VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/"
+        f"{PROJECT}/locations/{VERTEX_LOCATION}/publishers/google/models/"
+        f"{GEMINI_MODEL}:generateContent",
+        {"Authorization": f"Bearer {gcp_token()}"},
+    )
 DE_BASE = (
     f"https://discoveryengine.googleapis.com/v1/projects/{PROJECT}"
     "/locations/global/collections/default_collection"
@@ -161,17 +185,10 @@ def gemini_answer(question: str, sources: list, history: list) -> str:
         f"Conversation so far:\n{history_text or '(none)'}\n\n"
         f"Document excerpts:\n{excerpts}\n\nQuestion: {question}"
     )
-    url = (
-        f"https://{VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/"
-        f"{PROJECT}/locations/{VERTEX_LOCATION}/publishers/google/models/"
-        f"{GEMINI_MODEL}:generateContent"
-    )
+    url, headers = gemini_endpoint()
     body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
     try:
-        resp = requests.post(
-            url, json=body,
-            headers={"Authorization": f"Bearer {gcp_token()}"}, timeout=45,
-        )
+        resp = requests.post(url, json=body, headers=headers, timeout=45)
         if resp.status_code != 200:
             raise RuntimeError(resp.text[:200])
         parts = resp.json()["candidates"][0]["content"]["parts"]

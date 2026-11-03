@@ -146,4 +146,15 @@ assert "<b>" not in text and "&nbsp;" not in text, text
 assert "extractive mode" in text
 agent_main.requests.post = fake_post
 
+# --- Gemini endpoint selection (API key route vs Vertex route) ---
+agent_main.GEMINI_API_KEY = ""
+url, headers = agent_main.gemini_endpoint()
+assert "aiplatform.googleapis.com" in url and "Authorization" in headers, (url, headers)
+agent_main.GEMINI_API_KEY = "test-key-123"
+url, headers = agent_main.gemini_endpoint()
+assert url == ("https://generativelanguage.googleapis.com/v1beta/models/"
+               "gemini-2.5-flash:generateContent"), url
+assert headers == {"x-goog-api-key": "test-key-123"}, headers
+agent_main.GEMINI_API_KEY = ""
+
 print("ALL AGENT TESTS PASSED")

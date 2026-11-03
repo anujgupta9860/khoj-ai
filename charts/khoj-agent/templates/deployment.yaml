@@ -30,6 +30,14 @@ spec:
               value: {{ .Values.gcp.vertexLocation }}
             - name: GEMINI_MODEL
               value: {{ .Values.gcp.geminiModel }}
+            {{- if .Values.gemini.secretName }}
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gemini.secretName }}
+                  key: GEMINI_API_KEY
+                  optional: true
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           readinessProbe:

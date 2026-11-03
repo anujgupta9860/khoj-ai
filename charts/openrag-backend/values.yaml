@@ -1,5 +1,6 @@
-# Patched backend image built from deploy/docker/Dockerfile.backend.
-image: us-central1-docker.pkg.dev/innovation-lab-2026/khoj/openrag-backend-patched:0.1.0
+# Patched backend image built by cloudbuild.yaml from
+# deploy/docker/Dockerfile.backend (tags: SHORT_SHA + latest).
+image: us-central1-docker.pkg.dev/innovation-lab-2026/khoj/openrag-backend:latest
 opensearchUrl: https://opensearch:9200
 langflowUrl: http://langflow:7860
 doclingUrl: http://docling:5001
