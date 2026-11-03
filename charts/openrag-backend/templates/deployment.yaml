@@ -10,6 +10,10 @@ spec:
     metadata:
       labels: { app: openrag-backend }
     spec:
+      # Stop k8s service-link env injection: a Service named "opensearch"
+      # would otherwise inject OPENSEARCH_PORT=tcp://<ip>:9200 into this
+      # pod and shadow the real port (same collision class as Langflow's).
+      enableServiceLinks: false
       containers:
         - name: backend
           image: {{ .Values.image }}
@@ -20,6 +24,12 @@ spec:
             - { name: EMBEDDING_PROVIDER, value: {{ .Values.llm.embeddingProvider }} }
             - { name: EMBEDDING_MODEL, value: {{ .Values.llm.embeddingModel }} }
             - { name: OPENSEARCH_URL, value: {{ .Values.opensearchUrl }} }
+            # The backend actually dials OPENSEARCH_HOST/OPENSEARCH_PORT
+            # (defaults localhost when unset - found live on first GKE
+            # install: backend sat in its ping loop despite a healthy
+            # OpenSearch, because OPENSEARCH_URL alone is ignored).
+            - { name: OPENSEARCH_HOST, value: {{ .Values.opensearchHost }} }
+            - { name: OPENSEARCH_PORT, value: {{ .Values.opensearchPort | quote }} }
             - { name: LANGFLOW_URL, value: {{ .Values.langflowUrl }} }
             - { name: DOCLING_SERVE_URL, value: {{ .Values.doclingUrl }} }
             - { name: LANGFLOW_ALLOW_CUSTOM_COMPONENTS, value: "true" }

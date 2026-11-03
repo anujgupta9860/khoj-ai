@@ -10,11 +10,20 @@ spec:
     metadata:
       labels: { app: openrag-frontend }
     spec:
+      # Stop k8s service-link env injection: a Service named
+      # "openrag-backend" would otherwise inject
+      # OPENRAG_BACKEND_PORT=tcp://<ip>:8000 into this pod (seen live -
+      # the proxy built http://localhost:tcp://... URLs and failed).
+      enableServiceLinks: false
       containers:
         - name: frontend
           image: {{ .Values.image }}
           ports: [{ containerPort: 3000 }]
           env:
-            - { name: BACKEND_URL, value: {{ .Values.backendUrl }} }
+            # The frontend proxy reads these three - NOT BACKEND_URL
+            # (found live on first GKE install).
+            - { name: OPENRAG_BACKEND_HOST, value: {{ .Values.backendHost }} }
+            - { name: OPENRAG_BACKEND_PORT, value: {{ .Values.backendPort | quote }} }
+            - { name: OPENRAG_BACKEND_SSL, value: {{ .Values.backendSsl | quote }} }
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

@@ -1,5 +1,7 @@
 image: langflowai/openrag-frontend:latest
-backendUrl: http://openrag-backend:8000
+backendHost: openrag-backend
+backendPort: "8000"
+backendSsl: "false"
 ingress:
   enabled: true
   host: ""            # empty = IP-only via LB address
