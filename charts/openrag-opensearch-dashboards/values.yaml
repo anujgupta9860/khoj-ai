@@ -1,5 +1,9 @@
 image: opensearchproject/opensearch-dashboards:2.19.1
 opensearchHost: https://opensearch:9200
+ingress:
+  enabled: true
+  host: ""            # empty = IP-only via LB address
+  staticIpName: ""    # GKE reserved static IP name, optional
 resources:
   requests: { cpu: "250m", memory: "512Mi" }
   limits: { cpu: "1", memory: "1Gi" }

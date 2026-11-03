@@ -1,5 +1,9 @@
 image: langflowai/openrag-langflow:latest
 doclingUrl: http://docling:5001
+ingress:
+  enabled: true
+  host: ""            # empty = IP-only via LB address
+  staticIpName: ""    # GKE reserved static IP name, optional
 superuser: langflow
 # Password is NOT a value: it syncs from Google Secret Manager
 # (openrag-langflow-superuser-password) via External Secrets Operator.
