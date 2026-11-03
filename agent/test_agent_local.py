@@ -132,6 +132,30 @@ assert search_calls and search_calls[-1]["filters"] == {
 model_calls = [j for u, j in calls if "api.openai.com" in u]
 assert model_calls and model_calls[-1]["model"] == "gpt-4o-mini", model_calls
 
+# small documents are handed to the model as FULL TEXT, not just chunks
+# (form-like documents chunk badly - glossaries outrank the filled values)
+real_fetch = agent_main.fetch_document_text
+agent_main.fetch_document_text = lambda scope, filename: (
+    "FULLTEXT MARKER: the pump warranty is 2 years, parts and labour."
+    if filename == "doc.md" else None
+)
+calls.clear()
+r = client.post("/", json={
+    "jsonrpc": "2.0", "id": 30, "method": "message/send",
+    "params": {"message": {
+        "kind": "message", "role": "user", "messageId": "m-full",
+        "parts": [{"kind": "text", "text": "What does the warranty cover?"}],
+    }},
+}, headers=H)
+assert r.status_code == 200, r.text
+answer_prompts = [
+    j["messages"][0]["content"] for u, j in calls
+    if "api.openai.com" in u and "Document excerpts" in j["messages"][0]["content"]
+]
+assert answer_prompts and "FULLTEXT MARKER" in answer_prompts[-1], answer_prompts
+agent_main.fetch_document_text = real_fetch
+calls.clear()
+
 # same context keeps history (second turn answers too)
 r = client.post("/", json={
     "jsonrpc": "2.0", "id": 3, "method": "message/send",

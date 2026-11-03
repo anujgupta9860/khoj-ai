@@ -233,6 +233,20 @@ def search_snippets(queries: list, user: dict, org_id: str | None, page_size: in
         out.append(entry)
         if budget <= 0:
             break
+    # Form-like documents (W-2s, statements, receipts) chunk badly:
+    # the chunks that rank highest are glossaries and field-label lists,
+    # while the filled values sit in layout-scrambled chunks the model
+    # cannot tie to their labels (diagnosed live 2026-11-03 on a real
+    # W-2: 24 chunks, deduction labels present, model still refused).
+    # When a document's full text is small enough, hand the model the
+    # whole text so it can cross-reference labels and values itself.
+    for entry in out[:3]:
+        try:
+            full = fetch_document_text(entry["scope"], entry["title"])
+        except Exception:
+            full = None
+        if full and len(full) <= 20000:
+            entry["snippets"] = [full]
     return out
 
 

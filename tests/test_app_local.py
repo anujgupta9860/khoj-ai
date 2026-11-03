@@ -206,6 +206,11 @@ def openrag_post(url, json=None, files=None, headers=None, timeout=None):
         return Resp({"task_id": "task-1"}, status=202)
     if path == "/search":
         search_payloads.append(json)
+        if (json or {}).get("query") == "zzz-floor":
+            # baseline kNN noise: real text but a junk-level score
+            return Resp({"results": [
+                {"filename": MINE_NAME, "text": "some chunk text", "score": 1.27},
+            ]})
         if (json or {}).get("query") == "zzz-no-match":
             # OpenRAG shell hits: filename present, text empty
             return Resp({"results": [
@@ -214,10 +219,10 @@ def openrag_post(url, json=None, files=None, headers=None, timeout=None):
             ]})
         results = [
             {"filename": MINE_NAME, "text": "mine <b>text</b>&nbsp;here", "score": 2.0},
-            {"filename": GLOBAL_NAME, "text": "global handbook", "score": 0.5},
+            {"filename": GLOBAL_NAME, "text": "global handbook", "score": 1.8},
         ]
         if CORPUS["biz_name"]:
-            results.append({"filename": CORPUS["biz_name"], "text": "biz", "score": 1.0})
+            results.append({"filename": CORPUS["biz_name"], "text": "biz", "score": 3.0})
         return Resp({"results": results})
     raise AssertionError(f"unexpected POST {url}")
 
@@ -290,6 +295,10 @@ assert sorted(search_payloads[-1]["filters"]["filename"]) == sorted(
 
 # shell hits (filename with empty excerpt) are not results
 r = client.post("/api/search", json={"query": "zzz-no-match"}, headers=H)
+assert r.json()["totalSize"] == 0 and r.json()["results"] == [], r.json()
+
+# baseline-score chunks (unrelated-query noise) are not results either
+r = client.post("/api/search", json={"query": "zzz-floor"}, headers=H)
 assert r.json()["totalSize"] == 0 and r.json()["results"] == [], r.json()
 r = client.post("/api/search", json={"query": "q", "orgId": ORG_ID}, headers=H)
 assert [x["title"] for x in r.json()["results"]] == ["biz.md", "global.md"]

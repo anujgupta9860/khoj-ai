@@ -60,6 +60,13 @@ OPENRAG_URL = os.environ.get("OPENRAG_URL", "http://openrag-backend:8000")
 # /router/upload_ingest, /tasks/...). The /api/* prefix exists only on the
 # OpenRAG frontend's proxy (frontend/app/api/[...path] strips it). Calling
 # the backend with /api/* returns 404 - learned live 2026-11-03.
+#
+# Relevance floor for web search results. Measured live 2026-11-03:
+# unrelated queries return baseline chunks scoring 1.25-1.29 on every
+# corpus tried, while genuine matches scored 1.65+. Without a floor,
+# kNN returns the caller's nearest documents for ANY query, so junk
+# searches listed documents instead of returning nothing.
+MIN_SCORE = float(os.environ.get("KHOJ_MIN_SCORE", "1.5"))
 
 FIREBASE_WEB_CONFIG = {
     "apiKey": os.environ.get("FIREBASE_API_KEY", ""),
@@ -223,9 +230,8 @@ def _openrag_search(query: str, filenames: list, limit: int = 40) -> list:
             status_code=502, detail=f"Search backend: {resp.text[:300]}"
         )
     data = resp.json()
-    if isinstance(data, list):
-        return data
-    return data.get("results", [])
+    chunks = data if isinstance(data, list) else data.get("results", [])
+    return [c for c in chunks if c.get("score", 0) >= MIN_SCORE]
 
 
 def run_search(
