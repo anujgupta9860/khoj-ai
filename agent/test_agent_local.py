@@ -49,7 +49,7 @@ def fake_post(url, json=None, headers=None, timeout=None):
             "document": {
                 "id": "d1",
                 "structData": {"title": "doc.md", "user_id": "user-123"},
-                "derivedStructData": {"snippets": [{"snippet": "The pump warranty is 2 years."}]},
+                "derivedStructData": {"snippets": [{"snippet": "The <b>pump</b> warranty is&nbsp;2 years."}]},
             }
         }]
     })
@@ -123,5 +123,27 @@ r = client.post("/", json={
 }, headers=H)
 assert r.status_code == 200 and "text/event-stream" in r.headers["content-type"]
 assert "Grounded answer" in r.text
+
+# extractive fallback (model call fails): snippets are cleaned of
+# Vertex highlight markup and HTML entities before reaching the user
+def fake_post_no_model(url, json=None, headers=None, timeout=None):
+    if "aiplatform" in url:
+        return Resp({"error": "unavailable"}, status=503)
+    return fake_post(url, json=json, headers=headers, timeout=timeout)
+
+
+agent_main.requests.post = fake_post_no_model
+r = client.post("/", json={
+    "jsonrpc": "2.0", "id": 7, "method": "message/send",
+    "params": {"message": {
+        "kind": "message", "role": "user", "messageId": "m5",
+        "parts": [{"kind": "text", "text": "warranty?"}],
+    }},
+}, headers=H)
+text = r.json()["result"]["parts"][0]["text"]
+assert "The pump warranty is 2 years." in text, text
+assert "<b>" not in text and "&nbsp;" not in text, text
+assert "extractive mode" in text
+agent_main.requests.post = fake_post
 
 print("ALL AGENT TESTS PASSED")

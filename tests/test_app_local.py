@@ -178,7 +178,7 @@ class SearchResp:
                 {"document": {
                     "id": "d1",
                     "structData": {"user_id": "user-123", "title": "mine.md"},
-                    "derivedStructData": {"snippets": [{"snippet": "mine"}]},
+                    "derivedStructData": {"snippets": [{"snippet": "mine <b>text</b>&nbsp;here"}]},
                 }},
                 {"document": {
                     "id": "d2",
@@ -245,6 +245,7 @@ assert docs[new_doc]["title"] == "status.md", docs
 # the engine is queried unfiltered, other corpora's hits are dropped
 r = client.post("/api/search", json={"query": "q"}, headers=H)
 assert [x["title"] for x in r.json()["results"]] == ["mine.md"]
+assert r.json()["results"][0]["snippets"] == ["mine text here"]  # markup/entities stripped
 assert "filter" not in search_payloads[-1]
 r = client.post("/api/search", json={"query": "q", "orgId": ORG_ID}, headers=H)
 assert [x["title"] for x in r.json()["results"]] == ["biz.md"]

@@ -25,6 +25,7 @@ GKE) - no keys in code or repo.
 """
 
 import hashlib
+import html
 import json
 import os
 import re
@@ -68,6 +69,15 @@ DE_BASE = (
     f"https://discoveryengine.googleapis.com/v1/projects/{PROJECT}"
     f"/locations/{LOCATION}/collections/default_collection"
 )
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def clean_snippet(text: str) -> str:
+    """Vertex snippets carry highlight markup (<b>...</b>) and HTML
+    entities (&nbsp;). Strip both so results read as plain prose."""
+    return " ".join(html.unescape(_TAG_RE.sub(" ", text or "")).split())
 
 
 def require_user(authorization: str | None) -> dict:
@@ -216,12 +226,12 @@ def run_search(
                 "title": struct.get("title") or derived.get("title") or doc.get("id", ""),
                 "link": derived.get("link", ""),
                 "snippets": [
-                    s.get("snippet", "")
+                    clean_snippet(s.get("snippet", ""))
                     for s in derived.get("snippets", [])
                     if s.get("snippet")
                 ],
                 "extractive": [
-                    s.get("content", "")
+                    clean_snippet(s.get("content", ""))
                     for s in derived.get("extractive_answers", [])
                     if s.get("content")
                 ],

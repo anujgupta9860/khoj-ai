@@ -13,9 +13,19 @@ talks to this service as an A2A client, and any external A2A client can
 do the same.
 """
 
+import html
 import os
+import re
 import time
 import uuid
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def clean_snippet(text: str) -> str:
+    """Vertex snippets carry highlight markup (<b>...</b>) and HTML
+    entities (&nbsp;). Strip both so answers read as plain prose."""
+    return " ".join(html.unescape(_TAG_RE.sub(" ", text or "")).split())
 
 import firebase_admin
 import requests
@@ -116,7 +126,8 @@ def search_snippets(query: str, user: dict, org_id: str | None, page_size: int =
         if struct.get(key) != want:
             continue  # another corpus's document - never used for grounding
         snippets = [
-            s.get("snippet", "") for s in derived.get("snippets", []) if s.get("snippet")
+            clean_snippet(s.get("snippet", ""))
+            for s in derived.get("snippets", []) if s.get("snippet")
         ]
         if snippets:
             out.append({
@@ -167,8 +178,9 @@ def gemini_answer(question: str, sources: list, history: list) -> str:
         text = "".join(p.get("text", "") for p in parts).strip()
         if text:
             return text
-    except Exception:
-        pass
+        raise RuntimeError("Gemini returned an empty answer")
+    except Exception as e:
+        print(f"gemini_answer: falling back to extractive mode: {e!r}", flush=True)
     first = sources[0]
     return (
         "From " + first["title"] + ": " + " ".join(first["snippets"])[:600]
