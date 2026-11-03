@@ -5,8 +5,8 @@ Implements the A2A protocol (JSON-RPC 2.0): an AgentCard at
 root endpoint. Each request carries the caller's Firebase ID token as a
 Bearer credential; the agent verifies it, searches ONLY that caller's
 corpus (or a business corpus they belong to, via message metadata
-orgId) in Vertex AI Search, and grounds a Gemini answer on the
-retrieved snippets.
+orgId) in OpenRAG (the single retrieval engine), and grounds an
+LLM answer on the retrieved chunks.
 
 This is the conversational surface for Khoj: the web app's chat panel
 talks to this service as an A2A client, and any external A2A client can
@@ -26,7 +26,7 @@ _TAG_RE = re.compile(r"<[^>]+>")
 
 
 def clean_snippet(text: str) -> str:
-    """Vertex snippets carry highlight markup (<b>...</b>) and HTML
+    """Search snippets can carry highlight markup (<b>...</b>) and HTML
     entities (&nbsp;). Strip both so answers read as plain prose."""
     return " ".join(html.unescape(_TAG_RE.sub(" ", text or "")).split())
 
@@ -42,39 +42,15 @@ from google.auth.transport.requests import Request as GoogleAuthRequest
 from app.orgs import FirestoreOrgService
 
 PROJECT = os.environ.get("GCP_PROJECT", "innovation-lab-2026")
-ENGINE_ID = os.environ.get("KHOJ_ENGINE_ID", "khoj-search")
-DATASTORE_ID = os.environ.get("KHOJ_DATASTORE_ID", "")
 BUCKET = os.environ.get("KHOJ_BUCKET", "khoj-ai-corpus-innovation-lab")
-VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+# OpenRAG is the single retrieval engine (in-cluster service).
+OPENRAG_URL = os.environ.get("OPENRAG_URL", "http://openrag-backend:8000")
+# Answer model: OpenAI (the same provider OpenRAG itself runs on).
+# Without a key the agent answers extractively from the source files.
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
 
-def gemini_endpoint():
-    """Where the chat model call goes: (url, headers).
-
-    With GEMINI_API_KEY set, the Gemini API (generativelanguage) is used.
-    innovation-lab-2026 returns publisher-model 404s on the Vertex path
-    for every model (verified 2026-11-02, incl. gemini-1.5-flash-002)
-    while its Gemini API key route works, so the agent prefers the key
-    route there. Without a key, Vertex AI with the pod's Workload
-    Identity token remains the default."""
-    if GEMINI_API_KEY:
-        return (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{GEMINI_MODEL}:generateContent",
-            {"x-goog-api-key": GEMINI_API_KEY},
-        )
-    return (
-        f"https://{VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/"
-        f"{PROJECT}/locations/{VERTEX_LOCATION}/publishers/google/models/"
-        f"{GEMINI_MODEL}:generateContent",
-        {"Authorization": f"Bearer {gcp_token()}"},
-    )
-DE_BASE = (
-    f"https://discoveryengine.googleapis.com/v1/projects/{PROJECT}"
-    "/locations/global/collections/default_collection"
-)
 PUBLIC_URL = os.environ.get("AGENT_PUBLIC_URL", "")
 
 try:
@@ -116,9 +92,9 @@ def require_user(authorization: str | None) -> dict:
 
 def authorize_scope(user: dict, org_id: str | None) -> tuple:
     """Membership/approval gate for business corpora; returns the
-    (structData key, expected value) pair this caller may see. Scope is
-    enforced by post-filtering: the data store's auto-derived schema
-    does not expose user_id/org_id as filterable fields."""
+    (Firestore scope key, GCS scope prefix) pair for this caller.
+    Corpus isolation is enforced by filtering OpenRAG to exactly the
+    scope's document names (see search_snippets)."""
     if org_id:
         svc = org_service()
         if svc.membership(user["uid"], org_id) is None:
@@ -126,49 +102,65 @@ def authorize_scope(user: dict, org_id: str | None) -> tuple:
         org = svc.get_org(org_id)
         if org and org.get("status") != "approved":
             raise PermissionError("This business is pending approval")
-        return "org_id", org_id
-    return "user_id", user["uid"]
+        return f"org:{org_id}", f"orgs/{org_id}"
+    return f"user:{user['uid']}", f"users/{user['uid']}"
 
 
 def search_snippets(query: str, user: dict, org_id: str | None, page_size: int = 5) -> list:
-    """Standard-edition Vertex search: titles + snippets for grounding."""
-    key, want = authorize_scope(user, org_id)
-    url = f"{DE_BASE}/engines/{ENGINE_ID}/servingConfigs/default_search:search"
-    payload = {
-        "query": query,
-        "pageSize": min(page_size * 5, 50),
-        "spellCorrectionSpec": {"mode": "AUTO"},
-        "contentSearchSpec": {"snippetSpec": {"returnSnippet": True}},
+    """OpenRAG chunk search over ONLY the caller's corpus: the query
+    is server-side filtered to the scope's document names (each name
+    carries its doc-id prefix), then post-filtered again here."""
+    scope_key, scope_prefix = authorize_scope(user, org_id)
+    try:
+        records = org_service().list_uploads(scope_key)
+    except Exception:
+        records = []
+    by_name = {
+        f"{r.get('docId', '')}--{r.get('filename', '')}": r.get("filename", "")
+        for r in records
+        if r.get("docId") and r.get("filename")
     }
+    if not by_name:
+        return []
     resp = requests.post(
-        url, json=payload,
-        headers={"Authorization": f"Bearer {gcp_token()}"}, timeout=30,
+        f"{OPENRAG_URL}/api/search",
+        json={
+            "query": query,
+            "filters": {"filename": sorted(by_name)},
+            "limit": 15,
+        },
+        timeout=30,
     )
     if resp.status_code != 200:
         raise RuntimeError(f"Search backend: {resp.text[:200]}")
-    out = []
-    for r in resp.json().get("results", []):
-        doc = r.get("document", {})
-        derived = doc.get("derivedStructData", {})
-        struct = doc.get("structData", {})
-        if struct.get(key) != want:
+    data = resp.json()
+    chunks = data if isinstance(data, list) else data.get("results", [])
+    grouped: dict[str, dict] = {}
+    order: list[str] = []
+    for chunk in chunks:
+        name = chunk.get("filename", "")
+        if name not in by_name:
             continue  # another corpus's document - never used for grounding
-        snippets = [
-            clean_snippet(s.get("snippet", ""))
-            for s in derived.get("snippets", []) if s.get("snippet")
-        ]
-        if snippets:
-            out.append({
-                "title": struct.get("title") or derived.get("title") or doc.get("id", ""),
-                "snippets": snippets,
-                # Actual GCS scope prefix: the web service stores
-                # personal uploads under users/{uid}/ and business
-                # uploads under orgs/{orgId}/. The extractive path
-                # reads the source file from that exact layout.
-                "scope": f"users/{want}" if key == "user_id" else f"orgs/{want}",
-            })
-        if len(out) >= page_size:
-            break
+        if name not in grouped:
+            grouped[name] = {
+                "title": by_name[name],
+                "snippets": [],
+                "scope": scope_prefix,
+                "_score": chunk.get("score", 0),
+            }
+            order.append(name)
+        entry = grouped[name]
+        entry["_score"] = max(entry["_score"], chunk.get("score", 0))
+        text = clean_snippet(chunk.get("text", ""))
+        if text and len(entry["snippets"]) < 4:
+            entry["snippets"].append(text)
+    order.sort(key=lambda n: -grouped[n]["_score"])
+    out = []
+    for name in order[:page_size]:
+        entry = grouped[name]
+        entry.pop("_score", None)
+        if entry["snippets"]:
+            out.append(entry)
     return out
 
 
@@ -229,7 +221,7 @@ def extract_text(filename: str, raw: bytes) -> str | None:
     """Extract searchable text from an uploaded file's bytes. Supported:
     plain text formats directly, HTML by block-aware tag stripping,
     DOCX via its XML (stdlib only), PDF via pypdf. Anything else returns
-    None and the caller falls back to Vertex snippets for that file."""
+    None and the caller falls back to search snippets for that file."""
     ext = os.path.splitext(filename or "")[1].lower()
     if ext == ".docx":
         return _extract_docx(raw)
@@ -358,7 +350,7 @@ def pick_passages(text: str, question: str, budget: int = 2400) -> tuple[str, in
 
 def extractive_answer(question: str, sources: list) -> str:
     """Complete extractive answer: retrieve the actual source files
-    and quote the best full sections. Earlier version stitched Vertex's
+    and quote the best full sections. Earlier version stitched the search engine's
     ~200-character snippets (first document only, max 600 chars), which
     produced visibly unfinished answers. Last-resort fallback still
     uses snippets across sources if no file can be fetched/parsed."""
@@ -393,19 +385,21 @@ def extractive_answer(question: str, sources: list) -> str:
     return "\n\n".join(chunks) + "\n\n(chat is running in extractive mode right now)"
 
 
-def gemini_answer(question: str, sources: list, history: list) -> str:
-    """Ground a Gemini answer on the retrieved snippets. Falls back to
-    an extractive answer when the model call is unavailable, so chat
-    never hard-fails."""
-    excerpts = "\n\n".join(
-        f"[{i + 1}] {s['title']}\n" + "\n".join(s["snippets"])
-        for i, s in enumerate(sources)
-    )
+def model_answer(question: str, sources: list, history: list) -> str:
+    """Ground an OpenAI answer on the retrieved chunks. Falls back to
+    an extractive answer when no key is configured or the model call
+    is unavailable, so chat never hard-fails."""
     if not sources:
         return (
             "I couldn't find anything about that in the selected documents. "
             "Try different words, or upload the document that covers it."
         )
+    if not OPENAI_API_KEY:
+        return extractive_answer(question, sources)
+    excerpts = "\n\n".join(
+        f"[{i + 1}] {s['title']}\n" + "\n".join(s["snippets"])
+        for i, s in enumerate(sources)
+    )
     history_text = "\n".join(f"User: {h['q']}\nAssistant: {h['a']}" for h in history[-4:])
     prompt = (
         "You are Khoj, a document assistant. Answer the question using ONLY "
@@ -415,19 +409,25 @@ def gemini_answer(question: str, sources: list, history: list) -> str:
         f"Conversation so far:\n{history_text or '(none)'}\n\n"
         f"Document excerpts:\n{excerpts}\n\nQuestion: {question}"
     )
-    url, headers = gemini_endpoint()
-    body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
     try:
-        resp = requests.post(url, json=body, headers=headers, timeout=45)
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            json={
+                "model": OPENAI_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+            },
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            timeout=45,
+        )
         if resp.status_code != 200:
             raise RuntimeError(resp.text[:200])
-        parts = resp.json()["candidates"][0]["content"]["parts"]
-        text = "".join(p.get("text", "") for p in parts).strip()
+        text = resp.json()["choices"][0]["message"]["content"].strip()
         if text:
             return text
-        raise RuntimeError("Gemini returned an empty answer")
+        raise RuntimeError("Model returned an empty answer")
     except Exception as e:
-        print(f"gemini_answer: falling back to extractive mode: {e!r}", flush=True)
+        print(f"model_answer: falling back to extractive mode: {e!r}", flush=True)
     return extractive_answer(question, sources)
 
 
@@ -484,7 +484,7 @@ def _handle_message(params: dict, user: dict) -> dict:
     org_id = metadata.get("orgId") or None
     sources = search_snippets(text, user, org_id)
     history = _history.setdefault(context_id, [])
-    answer = gemini_answer(text, sources, history)
+    answer = model_answer(text, sources, history)
     history.append({"q": text, "a": answer})
     del history[:-6]
     return {

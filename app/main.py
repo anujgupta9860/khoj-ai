@@ -3,17 +3,19 @@
 Product model: every signed-in user uploads their OWN documents and can
 search only their own corpus. Businesses (orgs, app/orgs.py) are the
 second flavor: a business has N member users who share one corpus.
-Isolation is enforced server-side: documents are imported with
-structData {"user_id": <uid>} or {"org_id": <orgId>}, and every search
-carries a filter built only from the verified token (+ a Firestore
-membership check for org corpora) - scope ids never come from raw
-client assertions.
+Isolation is enforced server-side: OpenRAG is the single retrieval
+engine, and every document Khoj sends it is stored under a unique name
+derived from the scope + filename ("<docId>--<filename>"). Every search
+is filtered to exactly the caller's document names, built only from the
+verified token (+ a Firestore membership check for org corpora) - scope
+ids never come from raw client assertions. The original file is also
+kept in GCS as a cold copy (source of truth for re-ingestion).
 
 Surfaces:
   Web UI + API (static app in app/static):
     GET  /api/config       Firebase web config (public identifiers)
     GET  /api/me           Who am I (+ admin claim, kept for future use)
-    POST /api/search       Search my documents (Vertex AI Search)
+    POST /api/search       Search my documents (OpenRAG)
     GET  /api/documents    List my documents
     POST /api/upload       Upload a document into my corpus
   MCP server (app/mcp_server.py) for the user's own agent:
@@ -26,6 +28,7 @@ GKE) - no keys in code or repo.
 
 import hashlib
 import html
+import io
 import json
 import os
 import re
@@ -50,10 +53,9 @@ from .mcp_server import handle_rpc
 from .orgs import PLATFORM_ORG_ID, ROLES, UPLOAD_ROLES, FirestoreOrgService
 
 PROJECT = os.environ["GCP_PROJECT"]
-ENGINE_ID = os.environ["KHOJ_ENGINE_ID"]
-DATASTORE_ID = os.environ["KHOJ_DATASTORE_ID"]
 BUCKET = os.environ["KHOJ_BUCKET"]
-LOCATION = os.environ.get("KHOJ_LOCATION", "global")
+# OpenRAG is the single retrieval engine (in-cluster service).
+OPENRAG_URL = os.environ.get("OPENRAG_URL", "http://openrag-backend:8000")
 
 FIREBASE_WEB_CONFIG = {
     "apiKey": os.environ.get("FIREBASE_API_KEY", ""),
@@ -65,17 +67,13 @@ firebase_admin.initialize_app()
 
 app = FastAPI(title="Khoj.ai")
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-DE_BASE = (
-    f"https://discoveryengine.googleapis.com/v1/projects/{PROJECT}"
-    f"/locations/{LOCATION}/collections/default_collection"
-)
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
 def clean_snippet(text: str) -> str:
-    """Vertex snippets carry highlight markup (<b>...</b>) and HTML
+    """Search snippets can carry highlight markup (<b>...</b>) and HTML
     entities (&nbsp;). Strip both so results read as plain prose."""
     return " ".join(html.unescape(_TAG_RE.sub(" ", text or "")).split())
 
@@ -89,21 +87,40 @@ def require_user(authorization: str | None) -> dict:
         raise HTTPException(status_code=401, detail="Invalid ID token")
 
 
-def gcp_access_token() -> str:
-    creds, _ = google_auth_default(
-        scopes=["https://www.googleapis.com/auth/cloud-platform"]
-    )
-    creds.refresh(GoogleAuthRequest())
-    return creds.token
+def document_id(scope: str, filename: str) -> str:
+    """Stable per-(scope, filename) document id."""
+    return "doc-" + hashlib.sha256(f"{scope}/{filename}".encode()).hexdigest()[:24]
 
 
-def _headers() -> dict:
-    return {"Authorization": f"Bearer {gcp_access_token()}"}
+def openrag_filename(doc_id: str, filename: str) -> str:
+    """The name a document carries inside OpenRAG. The doc-id prefix
+    makes it unique per scope, so an OpenRAG filename filter is an
+    exact corpus boundary (two users can both upload 'resume.pdf')."""
+    return f"{doc_id}--{filename}"
 
 
-def user_filter(user: dict) -> str:
-    # The isolation boundary. uid comes from the verified Firebase token.
-    return f'user_id: ANY("{user["uid"]}")'
+def scope_of(user: dict, org_id: str | None) -> tuple[str, str]:
+    """(GCS scope prefix, Firestore scope key) for a corpus. Org
+    authorization (membership + approval) is checked by callers via
+    org_role/org_active before this is used for access."""
+    if org_id:
+        return f"orgs/{org_id}", f"org:{org_id}"
+    return f"users/{user['uid']}", f"user:{user['uid']}"
+
+
+def _scope_records(user: dict, org_id: str | None) -> list:
+    """Upload records for the caller's corpus, each enriched with its
+    OpenRAG filename. These records are the corpus membership list."""
+    _, scope_key = scope_of(user, org_id)
+    try:
+        records = org_service().list_uploads(scope_key)
+    except Exception:
+        records = []
+    for rec in records:
+        rec["_openrag_name"] = openrag_filename(
+            rec.get("docId", ""), rec.get("filename", "")
+        )
+    return records
 
 
 _org_service = None
@@ -156,12 +173,30 @@ def log_event(**entry) -> None:
         pass  # observability must never break the product path
 
 
-def corpus_filter(user: dict, org_id: str | None) -> str:
+def authorize_corpus(user: dict, org_id: str | None) -> None:
+    """Access gate for a corpus: a business corpus needs membership
+    plus an approved org; a personal corpus is the caller's own."""
     if org_id:
-        org_role(user, org_id)  # any member may search the business corpus
+        org_role(user, org_id)  # any member may use the business corpus
         org_active(user, org_id)
-        return f'org_id: ANY("{org_id}")'
-    return user_filter(user)
+
+
+def _openrag_search(query: str, filenames: list, limit: int = 40) -> list:
+    """One OpenRAG chunk search, server-side filtered to the given
+    document names. Returns raw chunk dicts (filename/text/score)."""
+    resp = requests.post(
+        f"{OPENRAG_URL}/api/search",
+        json={"query": query, "filters": {"filename": filenames}, "limit": limit},
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502, detail=f"Search backend: {resp.text[:300]}"
+        )
+    data = resp.json()
+    if isinstance(data, list):
+        return data
+    return data.get("results", [])
 
 
 def run_search(
@@ -171,84 +206,50 @@ def run_search(
     org_id: str | None = None,
     source: str = "web",
 ) -> dict:
-    # Authorization happens here (membership + approval for orgs); the
-    # corpus scope itself is enforced by post-filtering below, because
-    # this data store's schema (auto-derived from the first, untagged
-    # seed import) does not know user_id/org_id as filterable fields -
-    # Vertex rejects a filter on them with "Unsupported field".
-    corpus_filter(user, org_id)
-    key, want = ("org_id", org_id) if org_id else ("user_id", user["uid"])
-    url = f"{DE_BASE}/engines/{ENGINE_ID}/servingConfigs/default_search:search"
-    base = {
-        "query": query,
-        "pageSize": min(page_size * 5, 50),
-        "spellCorrectionSpec": {"mode": "AUTO"},
-        "queryExpansionSpec": {"condition": "AUTO"},
-    }
-    rich_spec = {
-        "summarySpec": {
-            "summaryResultCount": 3,
-            "includeCitations": True,
-            "ignoreAdversarialQuery": True,
-        },
-        "snippetSpec": {"returnSnippet": True},
-        "extractiveContentSpec": {"maxExtractiveAnswerCount": 1},
-    }
-    # Summary + extractive answers are Enterprise-edition features. The
-    # engine may be Standard edition (cheaper); try the rich request and
-    # fall back to snippet-only search when Vertex rejects it, instead of
-    # failing the user's search.
+    # Authorization happens here (membership + approval for orgs). The
+    # corpus scope itself is enforced by filtering OpenRAG to exactly
+    # this corpus's document names (each name carries its doc-id
+    # prefix), plus a post-filter as a second line of defence.
+    authorize_corpus(user, org_id)
+    records = _scope_records(user, org_id)
+    by_name = {r["_openrag_name"]: r.get("filename", "") for r in records}
     started = time.monotonic()
-    resp = requests.post(
-        url, json={**base, "contentSearchSpec": rich_spec},
-        headers=_headers(), timeout=30,
-    )
-    if resp.status_code == 400 and "enterprise edition" in resp.text.lower():
-        resp = requests.post(
-            url,
-            json={**base, "contentSearchSpec": {"snippetSpec": {"returnSnippet": True}}},
-            headers=_headers(), timeout=30,
-        )
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"Search backend: {resp.text[:300]}")
-    data = resp.json()
     results = []
-    for r in data.get("results", []):
-        doc = r.get("document", {})
-        derived = doc.get("derivedStructData", {})
-        struct = doc.get("structData", {})
-        if struct.get(key) != want:
-            continue  # another corpus's document - never returned
-        if len(results) >= page_size:
-            break
-        results.append(
-            {
-                "title": struct.get("title") or derived.get("title") or doc.get("id", ""),
-                "link": derived.get("link", ""),
-                "snippets": [
-                    clean_snippet(s.get("snippet", ""))
-                    for s in derived.get("snippets", [])
-                    if s.get("snippet")
-                ],
-                "extractive": [
-                    clean_snippet(s.get("content", ""))
-                    for s in derived.get("extractive_answers", [])
-                    if s.get("content")
-                ],
-            }
-        )
-    out = {
-        "summary": data.get("summary", {}).get("summaryText", ""),
-        "totalSize": len(results),
-        "results": results,
-    }
+    if by_name:
+        chunks = _openrag_search(query, sorted(by_name), limit=40)
+        grouped: dict[str, dict] = {}
+        order: list[str] = []
+        for chunk in chunks:
+            name = chunk.get("filename", "")
+            if name not in by_name:
+                continue  # another corpus's document - never returned
+            if name not in grouped:
+                grouped[name] = {
+                    "title": by_name[name],
+                    "link": "",
+                    "snippets": [],
+                    "extractive": [],
+                    "_score": chunk.get("score", 0),
+                }
+                order.append(name)
+            entry = grouped[name]
+            entry["_score"] = max(entry["_score"], chunk.get("score", 0))
+            text = clean_snippet(chunk.get("text", ""))
+            if text and len(entry["snippets"]) < 3:
+                entry["snippets"].append(text)
+        order.sort(key=lambda n: -grouped[n]["_score"])
+        for name in order[:page_size]:
+            entry = grouped[name]
+            entry.pop("_score", None)
+            results.append(entry)
+    out = {"summary": "", "totalSize": len(results), "results": results}
     log_event(
         kind="search",
         uid=user["uid"],
         email=user.get("email", ""),
         orgId=org_id,
         query=query,
-        summary=out["summary"][:500],
+        summary="",
         results=out["totalSize"],
         latencyMs=int((time.monotonic() - started) * 1000),
         source=source,
@@ -256,77 +257,74 @@ def run_search(
     return out
 
 
-def _indexed_documents(user: dict, org_id: str | None = None) -> dict:
-    """Documents already present in the search index for this corpus."""
-    if org_id:
-        org_role(user, org_id)
-        org_active(user, org_id)
-        key, want = "org_id", org_id
-    else:
-        key, want = "user_id", user["uid"]
-    url = f"{DE_BASE}/dataStores/{DATASTORE_ID}/branches/0/documents"
-    mine, token = {}, None
-    for _ in range(5):  # cap the scan at POC scale
-        params = {"pageSize": 100}
-        if token:
-            params["pageToken"] = token
-        resp = requests.get(url, params=params, headers=_headers(), timeout=30)
-        if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"List backend: {resp.text[:300]}")
-        data = resp.json()
-        for d in data.get("documents", []):
-            struct = d.get("structData", {})
-            if struct.get(key) == want:
-                mine[d.get("id", "")] = struct.get("title") or d.get("id", "")
-        token = data.get("nextPageToken")
-        if not token:
-            break
-    return mine
+_files_cache: dict = {"at": 0.0, "names": {}}
 
 
-def _operation_error(operation: str) -> str | None:
-    """Error message when a Vertex import operation finished with an
-    error; None when it is still running, finished cleanly, or cannot
-    be checked."""
-    if not operation:
-        return None
-    try:
-        resp = requests.get(
-            f"https://discoveryengine.googleapis.com/v1/{operation}",
-            headers=_headers(), timeout=15,
+def _openrag_files() -> dict:
+    """All documents in OpenRAG: name -> {chunks, indexed_time}.
+    Cached for a few seconds; list/search calls share one fetch."""
+    now = time.monotonic()
+    if now - _files_cache["at"] < 5:
+        return _files_cache["names"]
+    resp = requests.get(f"{OPENRAG_URL}/api/files", timeout=15)
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502, detail=f"List backend: {resp.text[:300]}"
         )
+    data = resp.json()
+    entries = data.get("files", data) if isinstance(data, dict) else data
+    names = {}
+    for entry in entries or []:
+        name = entry.get("filename") or entry.get("title") or ""
+        if name:
+            names[name] = entry
+    _files_cache.update(at=now, names=names)
+    return names
+
+
+def _openrag_task_error(task_id: str) -> str | None:
+    """Error message when an OpenRAG ingestion task failed; None when
+    it succeeded, is still running, or cannot be checked."""
+    if not task_id:
+        return None
+    for path in (f"/api/tasks/{task_id}", f"/api/v1/tasks/{task_id}"):
+        try:
+            resp = requests.get(f"{OPENRAG_URL}{path}", timeout=10)
+        except Exception:
+            return None
+        if resp.status_code == 404:
+            continue
         if resp.status_code != 200:
             return None
-        err = resp.json().get("error")
-        if err:
-            return str(err.get("message", "import failed"))[:200]
-    except Exception:
-        pass
+        data = resp.json()
+        status = str(data.get("status", "")).lower()
+        if status in ("failed", "error", "failure"):
+            return str(data.get("error") or data.get("message") or "ingestion failed")[:200]
+        return None
     return None
 
 
 def list_documents(user: dict, org_id: str | None = None) -> list:
     """Every file in this corpus, each with an ingestion status: a file
     appears the moment it is uploaded ('indexing'), flips to 'ready'
-    once the search index contains it, or shows 'failed' when its
-    import operation reports an error."""
-    indexed = _indexed_documents(user, org_id)
-    scope_key = f"org:{org_id}" if org_id else f"user:{user['uid']}"
-    try:
-        records = org_service().list_uploads(scope_key)
-    except Exception:
-        records = []
+    once OpenRAG has indexed it, or shows 'failed' when its ingestion
+    task reports an error."""
+    authorize_corpus(user, org_id)
+    records = _scope_records(user, org_id)
+    if not records:
+        return []
+    indexed = _openrag_files()
     out = {}
     for rec in records:
         doc_id = rec.get("docId", "")
-        if doc_id in indexed:
+        if rec.get("_openrag_name") in indexed:
             out[doc_id] = {
                 "id": doc_id,
-                "title": rec.get("filename") or indexed[doc_id],
+                "title": rec.get("filename") or doc_id,
                 "status": "ready",
             }
             continue
-        error = _operation_error(rec.get("operation", ""))
+        error = _openrag_task_error(rec.get("openragTask", ""))
         item = {
             "id": doc_id,
             "title": rec.get("filename") or doc_id,
@@ -335,8 +333,6 @@ def list_documents(user: dict, org_id: str | None = None) -> list:
         if error:
             item["error"] = error
         out[doc_id] = item
-    for doc_id, title in indexed.items():
-        out.setdefault(doc_id, {"id": doc_id, "title": title, "status": "ready"})
     return sorted(out.values(), key=lambda d: d["title"].lower())
 
 
@@ -653,9 +649,10 @@ def upload(
     orgId: str | None = Form(default=None),
     authorization: str | None = Header(default=None),
 ):
-    """Upload into my corpus - or, with orgId, into a business corpus the
-    caller owns or admins. The structData scope key (user_id / org_id) is
-    what every search filter keys on."""
+    """Upload into my corpus - or, with orgId, into a business corpus
+    the caller owns or admins. The file goes to OpenRAG under its
+    doc-id-prefixed name (the corpus boundary every search filter keys
+    on); the original is also kept in GCS as a cold copy."""
     user = require_user(authorization)
     filename = os.path.basename(file.filename or "document")
     mime = file.content_type or _MIME_BY_EXT.get(
@@ -664,55 +661,36 @@ def upload(
     if orgId:
         org_role(user, orgId, allowed=UPLOAD_ROLES)
         org_active(user, orgId)
-        scope = f"orgs/{orgId}"
-        struct = {"org_id": orgId, "uploaded_by": user["uid"], "title": filename}
-    else:
-        scope = f"users/{user['uid']}"
-        struct = {
-            "user_id": user["uid"],
-            "owner_email": user.get("email", ""),
-            "title": filename,
-        }
+    scope, scope_key = scope_of(user, orgId)
+    data = file.file.read()
+
     bucket = storage.Client(project=PROJECT).bucket(BUCKET)
-    object_name = f"{scope}/{filename}"
-    bucket.blob(object_name).upload_from_file(file.file, content_type=mime)
+    bucket.blob(f"{scope}/{filename}").upload_from_string(data, content_type=mime)
 
-    doc_id = "doc-" + hashlib.sha256(f"{scope}/{filename}".encode()).hexdigest()[:24]
-    record = {
-        "id": doc_id,
-        "structData": struct,
-        "content": {"mimeType": mime, "uri": f"gs://{BUCKET}/{object_name}"},
-    }
-    meta_name = f"meta/{scope}/{filename}.jsonl"
-    bucket.blob(meta_name).upload_from_string(
-        json.dumps(record) + "\n", content_type="application/json"
+    doc_id = document_id(scope, filename)
+    or_name = openrag_filename(doc_id, filename)
+    resp = requests.post(
+        f"{OPENRAG_URL}/api/router/upload_ingest",
+        files={"file": (or_name, io.BytesIO(data), mime)},
+        timeout=120,
     )
-
-    import_url = f"{DE_BASE}/dataStores/{DATASTORE_ID}/branches/0/documents:import"
-    payload = {
-        "gcsSource": {
-            "inputUris": [f"gs://{BUCKET}/{meta_name}"],
-            # "document", NOT "custom": with "custom" Vertex parses each
-            # JSONL line as raw schema data and rejects it ("Custom
-            # Document Id (_id) was not found"); "document" parses the
-            # {id, structData, content} shape this app writes. Verified
-            # live 2026-11-02 (probe import: successCount 1, structData
-            # intact in index + search results).
-            "dataSchema": "document",
-        },
-        "reconciliationMode": "INCREMENTAL",
-    }
-    resp = requests.post(import_url, json=payload, headers=_headers(), timeout=30)
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"Import trigger: {resp.text[:300]}")
+    if resp.status_code not in (200, 202):
+        raise HTTPException(
+            status_code=502, detail=f"Ingestion trigger: {resp.text[:300]}"
+        )
+    task_id = ""
+    try:
+        task_id = resp.json().get("task_id", "")
+    except Exception:
+        pass
     try:
         org_service().record_upload({
             "docId": doc_id,
-            "scopeKey": f"org:{orgId}" if orgId else f"user:{user['uid']}",
+            "scopeKey": scope_key,
             "uid": user["uid"],
             "orgId": orgId,
             "filename": filename,
-            "operation": resp.json().get("name", ""),
+            "openragTask": task_id,
             "uploadedAt": int(time.time()),
         })
     except Exception:
@@ -731,7 +709,7 @@ def upload(
         {
             "uploaded": filename,
             "documentId": doc_id,
-            "import": resp.json().get("name", ""),
+            "task": task_id,
             "at": int(time.time()),
         }
     )

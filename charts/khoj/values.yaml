@@ -8,10 +8,11 @@ replicaCount: 1
 # GCP wiring (no secrets - identity comes from Workload Identity)
 gcp:
   project: innovation-lab-2026
-  engineId: "khoj-search"                      # Vertex AI Search app (engine) id
-  datastoreId: "khoj-corpus_1793659971762"     # Vertex AI Search data store id
-  bucket: "khoj-ai-corpus-innovation-lab"      # GCS corpus bucket
-  location: global
+  bucket: "khoj-ai-corpus-innovation-lab"      # GCS bucket (original files, cold copies)
+
+# OpenRAG: the single retrieval engine (in-cluster service)
+openrag:
+  url: "http://openrag-backend:8000"
 
 firebase:
   apiKey: "AIzaSyBj_VxGuj_iVjrnnjzS2g8S0zRfg4ItYX4"   # Firebase web config (public identifiers)
@@ -22,8 +23,8 @@ agent:
   url: "http://khoj-agent"
 
 workloadIdentity:
-  # Google service account the pods act as (needs discoveryengine viewer +
-  # editor for imports, storage object admin on the bucket, firebase auth)
+  # Google service account the pods act as (storage object admin on the
+  # bucket, firestore, firebase auth)
   gsaEmail: ""
 
 service:

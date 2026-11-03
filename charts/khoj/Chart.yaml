@@ -1,6 +1,6 @@
 apiVersion: v2
 name: khoj
-description: Khoj.ai web service - signup, search (Vertex AI Search), admin corpus upload
+description: Khoj.ai web service - signup, orgs, uploads and search over OpenRAG
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

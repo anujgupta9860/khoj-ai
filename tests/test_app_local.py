@@ -1,18 +1,16 @@
 """Local wiring tests: MCP endpoint, per-user isolation, upload record.
 
-Runs fully offline - Firebase, GCP auth, GCS and the Discovery Engine
-HTTP calls are stubbed. Run:  python tests/test_app_local.py
+Runs fully offline - Firebase, GCP auth, GCS and the OpenRAG HTTP
+calls are stubbed. Run:  python tests/test_app_local.py
 """
 
 import io
-import json
 import os
 import sys
 
 os.environ.setdefault("GCP_PROJECT", "innovation-lab-2026")
-os.environ.setdefault("KHOJ_ENGINE_ID", "khoj-search")
-os.environ.setdefault("KHOJ_DATASTORE_ID", "khoj-corpus_test")
 os.environ.setdefault("KHOJ_BUCKET", "khoj-ai-corpus-innovation-lab")
+os.environ.setdefault("OPENRAG_URL", "http://openrag-backend:8000")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -29,7 +27,6 @@ REAL_REQUIRE_USER = main.require_user
 REAL_RUN_SEARCH = main.run_search
 REAL_LIST_DOCUMENTS = main.list_documents
 main.require_user = lambda authorization: USER
-main.gcp_access_token = lambda: "fake-token"
 
 captured = {}
 
@@ -52,6 +49,16 @@ H = {"Authorization": "Bearer whatever"}
 
 def rpc(payload, headers=H):
     return client.post("/mcp", json=payload, headers=headers)
+
+
+class Resp:
+    def __init__(self, payload, status=200):
+        self._payload = payload
+        self.status_code = status
+        self.text = str(payload)[:300]
+
+    def json(self):
+        return self._payload
 
 
 # --- MCP handshake + tools -------------------------------------------------
@@ -97,9 +104,14 @@ for bad in (None, "Bearer not-a-token"):
     except HTTPException as e:
         assert e.status_code == 401, e.status_code
 
-assert main.user_filter({"uid": "abc"}) == 'user_id: ANY("abc")'
+# --- corpus naming: doc ids are stable, OpenRAG names carry the scope -----
+assert main.document_id("users/abc", "x.md").startswith("doc-")
+assert main.document_id("users/abc", "x.md") != main.document_id("orgs/o1", "x.md")
+assert main.openrag_filename("doc-1", "x.md") == "doc-1--x.md"
+assert main.scope_of({"uid": "abc"}, None) == ("users/abc", "user:abc")
+assert main.scope_of({"uid": "abc"}, "org-9") == ("orgs/org-9", "org:org-9")
 
-# --- upload: structData record carries the caller's uid --------------------
+# --- upload: file kept in GCS, ingested into OpenRAG under its doc name ----
 blobs = {}
 
 
@@ -129,15 +141,15 @@ class FakeClient:
 
 main.storage.Client = FakeClient
 
-
-class Resp:
-    status_code = 200
-
-    def json(self):
-        return {"name": "operations/import-1"}
+ingest_calls = []
 
 
-main.requests.post = lambda *a, **k: Resp()
+def first_post(url, json=None, files=None, headers=None, timeout=None):
+    ingest_calls.append((url, files["file"][0] if files else None))
+    return Resp({"task_id": "task-0"}, status=202)
+
+
+main.requests.post = first_post
 
 r = client.post(
     "/api/upload",
@@ -145,12 +157,12 @@ r = client.post(
     headers=H,
 )
 assert r.status_code == 200, r.text
-meta = [v for k, v in blobs.items() if k.startswith("meta/users/user-123/")]
-assert meta and meta[0][0] == "str"
-record = json.loads(meta[0][1])
-assert record["structData"]["user_id"] == "user-123", record
-assert record["content"]["uri"].endswith("users/user-123/notes.md"), record
-assert r.json()["documentId"] == record["id"]
+doc_id = main.document_id("users/user-123", "notes.md")
+assert r.json()["documentId"] == doc_id
+assert r.json()["task"] == "task-0"
+assert "users/user-123/notes.md" in blobs
+assert not any(k.startswith("meta/") for k in blobs), list(blobs)
+assert ingest_calls[-1][1] == main.openrag_filename(doc_id, "notes.md")
 
 # --- Businesses: shared corpus with membership enforced ----------------------
 from types import SimpleNamespace
@@ -164,54 +176,49 @@ main.list_documents = REAL_LIST_DOCUMENTS
 CURRENT = {"user": USER}
 main.require_user = lambda authorization: CURRENT["user"]
 
+# corpus fixtures: mine.md (personal) and biz.md (business), present
+# both as upload records and as indexed OpenRAG documents
+MINE_ID = main.document_id("users/user-123", "mine.md")
+MINE_NAME = main.openrag_filename(MINE_ID, "mine.md")
+main._org_service.record_upload({
+    "docId": MINE_ID, "scopeKey": "user:user-123", "uid": "user-123",
+    "orgId": None, "filename": "mine.md", "openragTask": "task-0",
+    "uploadedAt": 0,
+})
+CORPUS = {"biz_name": None, "team_name": None}
+
 search_payloads = []
+upload_names = []
 
 
-class SearchResp:
-    status_code = 200
-
-    def json(self):
-        return {
-            "summary": {"summaryText": "S"},
-            "totalSize": 0,
-            "results": [
-                {"document": {
-                    "id": "d1",
-                    "structData": {"user_id": "user-123", "title": "mine.md"},
-                    "derivedStructData": {"snippets": [{"snippet": "mine <b>text</b>&nbsp;here"}]},
-                }},
-                {"document": {
-                    "id": "d2",
-                    "structData": {"org_id": ORG_ID, "title": "biz.md"},
-                    "derivedStructData": {"snippets": [{"snippet": "biz"}]},
-                }},
-            ],
-            "name": "operations/x",
-        }
+def openrag_post(url, json=None, files=None, headers=None, timeout=None):
+    if url.endswith("/api/router/upload_ingest"):
+        upload_names.append(files["file"][0])
+        return Resp({"task_id": "task-1"}, status=202)
+    if url.endswith("/api/search"):
+        search_payloads.append(json)
+        results = [
+            {"filename": MINE_NAME, "text": "mine <b>text</b>&nbsp;here", "score": 2.0},
+        ]
+        if CORPUS["biz_name"]:
+            results.append({"filename": CORPUS["biz_name"], "text": "biz", "score": 1.0})
+        return Resp({"results": results})
+    raise AssertionError(f"unexpected POST {url}")
 
 
-def vertex_post(url, json=None, headers=None, timeout=None):
-    search_payloads.append(json)
-    return SearchResp()
+def openrag_get(url, params=None, headers=None, timeout=None):
+    if url.endswith("/api/files"):
+        files = [{"filename": MINE_NAME, "chunk_count": 3}]
+        if CORPUS["biz_name"]:
+            files.append({"filename": CORPUS["biz_name"], "chunk_count": 2})
+        return Resp({"files": files})
+    if "/tasks/" in url:
+        return Resp({"status": "RUNNING"})
+    raise AssertionError(f"unexpected GET {url}")
 
 
-main.requests.post = vertex_post
-
-
-class DocsResp:
-    status_code = 200
-
-    def json(self):
-        return {
-            "documents": [
-                {"id": "d1", "structData": {"user_id": "user-123", "title": "mine.md"}},
-                {"id": "d2", "structData": {"org_id": ORG_ID, "title": "biz.md"}},
-            ]
-        }
-
-
-ORG_ID = None  # set below before DocsResp is used
-main.requests.get = lambda *a, **k: DocsResp()
+main.requests.post = openrag_post
+main.requests.get = openrag_get
 
 # admin (enroller) creates a business - it starts PENDING approval
 r = client.post("/api/orgs", json={"name": "Acme Inc"}, headers=H)
@@ -222,6 +229,14 @@ assert org["status"] == "pending", org
 ORG_ID = org["id"]
 # simulate the super-admin approval (the gated flow itself is tested below)
 main._org_service.set_org_status(ORG_ID, "approved")
+
+BIZ_ID = main.document_id(f"orgs/{ORG_ID}", "biz.md")
+CORPUS["biz_name"] = main.openrag_filename(BIZ_ID, "biz.md")
+main._org_service.record_upload({
+    "docId": BIZ_ID, "scopeKey": f"org:{ORG_ID}", "uid": "user-123",
+    "orgId": ORG_ID, "filename": "biz.md", "openragTask": "task-0",
+    "uploadedAt": 0,
+})
 
 r = client.get("/api/orgs", headers=H)
 assert [o["id"] for o in r.json()["orgs"]] == [ORG_ID]
@@ -234,21 +249,24 @@ r = client.post(
 )
 assert r.status_code == 200, r.text
 new_doc = r.json()["documentId"]
+STATUS_NAME = main.openrag_filename(new_doc, "status.md")
+assert upload_names[-1] == STATUS_NAME
 r = client.get("/api/documents", headers=H)
 docs = {d["id"]: d for d in r.json()["documents"]}
-assert docs["d1"]["status"] == "ready", docs         # already in the index
-assert docs[new_doc]["status"] == "indexing", docs   # uploaded, not indexed yet
+assert docs[MINE_ID]["status"] == "ready", docs        # already in OpenRAG
+assert docs[new_doc]["status"] == "indexing", docs     # uploaded, not indexed yet
 assert docs[new_doc]["title"] == "status.md", docs
 
-# search scope is enforced by post-filtering on structData (the data
-# store schema does not expose user_id/org_id as filterable fields):
-# the engine is queried unfiltered, other corpora's hits are dropped
+# search scope is enforced by an OpenRAG filename filter naming exactly
+# this corpus's documents, plus post-filtering: other corpora's hits
+# are dropped even when the engine returns them
 r = client.post("/api/search", json={"query": "q"}, headers=H)
 assert [x["title"] for x in r.json()["results"]] == ["mine.md"]
 assert r.json()["results"][0]["snippets"] == ["mine text here"]  # markup/entities stripped
-assert "filter" not in search_payloads[-1]
+assert sorted(search_payloads[-1]["filters"]["filename"]) == sorted([MINE_NAME, STATUS_NAME])
 r = client.post("/api/search", json={"query": "q", "orgId": ORG_ID}, headers=H)
 assert [x["title"] for x in r.json()["results"]] == ["biz.md"]
+assert search_payloads[-1]["filters"]["filename"] == [CORPUS["biz_name"]]
 
 # document listing is scoped the same way (status.md is the same user's
 # upload from the status test above; biz.md must NOT leak into this list)
@@ -282,7 +300,8 @@ r = client.post(
 )
 assert r.status_code == 403, r.text
 
-# the admin can - and the record is scoped org_id, NOT user_id
+# the admin can - the file lands in the org's GCS prefix and goes to
+# OpenRAG under the org-scoped doc name
 CURRENT["user"] = USER
 blobs.clear()
 r = client.post(
@@ -292,11 +311,11 @@ r = client.post(
     headers=H,
 )
 assert r.status_code == 200, r.text
-meta = [v for k, v in blobs.items() if k.startswith(f"meta/orgs/{ORG_ID}/")]
-assert meta, list(blobs)
-record = json.loads(meta[0][1])
-assert record["structData"]["org_id"] == ORG_ID and "user_id" not in record["structData"]
-assert record["content"]["uri"].endswith(f"orgs/{ORG_ID}/team.md")
+assert f"orgs/{ORG_ID}/team.md" in blobs
+TEAM_ID = main.document_id(f"orgs/{ORG_ID}", "team.md")
+CORPUS["team_name"] = main.openrag_filename(TEAM_ID, "team.md")
+assert upload_names[-1] == CORPUS["team_name"]
+assert r.json()["documentId"] == TEAM_ID
 
 # MCP: corpora discovery + org-scoped search through the agent surface
 CURRENT["user"] = {"uid": "member-9", "email": "m@x.com"}
@@ -310,7 +329,8 @@ r = rpc({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
 assert r.json()["result"]["isError"] is False, r.text
 mcp_text = r.json()["result"]["content"][0]["text"]
 assert "biz.md" in mcp_text and "mine.md" not in mcp_text  # org scope only
-assert "filter" not in search_payloads[-1]
+assert sorted(search_payloads[-1]["filters"]["filename"]) == sorted(
+    [CORPUS["biz_name"], CORPUS["team_name"]])
 CURRENT["user"] = USER
 
 # --- Invitations + branding ---------------------------------------------------

@@ -7,21 +7,26 @@ replicaCount: 1
 
 gcp:
   project: innovation-lab-2026
-  engineId: "khoj-search"
-  datastoreId: "khoj-corpus_1793659971762"
-  vertexLocation: us-central1
-  geminiModel: "gemini-2.5-flash"
   bucket: "khoj-ai-corpus-innovation-lab"
 
-gemini:
-  # Optional k8s Secret holding GEMINI_API_KEY (created from Google
-  # Secret Manager -- never in values/git). When the secret is absent
-  # the agent falls back to the Vertex AI route.
-  secretName: "khoj-agent-secrets"
+# OpenRAG: the single retrieval engine (in-cluster service)
+openrag:
+  url: "http://openrag-backend:8000"
+
+openai:
+  # Answer model. The API key arrives via External Secrets Operator
+  # from Google Secret Manager (the same key OpenRAG uses) into the
+  # k8s Secret named here -- never in values/git. When the secret is
+  # absent the agent answers extractively from the source files.
+  model: "gpt-4o-mini"
+  secretName: "khoj-agent-openai"
+  externalSecret:
+    enabled: true
+    gsmKey: "openrag-openai-api-key"
 
 workloadIdentity:
-  # Same app GSA as the web service (Discovery Engine + Firestore +
-  # Firebase Auth + Vertex AI user for Gemini)
+  # Same app GSA as the web service (Firestore + Firebase Auth +
+  # storage reads on the corpus bucket for the extractive fallback)
   gsaEmail: ""
 
 service:

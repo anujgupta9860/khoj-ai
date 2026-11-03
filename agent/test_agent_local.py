@@ -1,5 +1,5 @@
 """Local wiring tests for the Khoj A2A agent. Fully offline: Firebase
-token verification, the Vertex search call, and the Gemini call are
+token verification, the OpenRAG search call, and the OpenAI call are
 stubbed. Run:  python agent/test_agent_local.py
 """
 
@@ -7,8 +7,7 @@ import os
 import sys
 
 os.environ.setdefault("GCP_PROJECT", "innovation-lab-2026")
-os.environ.setdefault("KHOJ_ENGINE_ID", "khoj-search")
-os.environ.setdefault("KHOJ_DATASTORE_ID", "khoj-corpus_test")
+os.environ.setdefault("KHOJ_BUCKET", "khoj-ai-corpus-innovation-lab")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -26,6 +25,19 @@ agent_main.fb_auth.verify_id_token = lambda token: {
 }
 agent_main._org_service = InMemoryOrgService()
 agent_main.gcp_token = lambda: "fake-token"
+agent_main.OPENAI_API_KEY = "test-key"
+
+# the caller's corpus: one document, known to the upload records
+agent_main._org_service.record_upload({
+    "docId": "doc-test123",
+    "scopeKey": "user:user-123",
+    "uid": "user-123",
+    "orgId": None,
+    "filename": "doc.md",
+    "openragTask": "task-0",
+    "uploadedAt": 0,
+})
+OPENRAG_NAME = "doc-test123--doc.md"
 
 calls = []
 
@@ -41,16 +53,15 @@ class Resp:
 
 
 def fake_post(url, json=None, headers=None, timeout=None):
-    calls.append(url)
-    if "aiplatform" in url:
-        return Resp({"candidates": [{"content": {"parts": [{"text": "Grounded answer [1]."}]}}]})
+    calls.append((url, json))
+    if "api.openai.com" in url:
+        return Resp({"choices": [{"message": {"content": "Grounded answer [1]."}}]})
+    # OpenRAG chunk search
     return Resp({
         "results": [{
-            "document": {
-                "id": "d1",
-                "structData": {"title": "doc.md", "user_id": "user-123"},
-                "derivedStructData": {"snippets": [{"snippet": "The <b>pump</b> warranty is&nbsp;2 years."}]},
-            }
+            "filename": OPENRAG_NAME,
+            "text": "The <b>pump</b> warranty is&nbsp;2 years.",
+            "score": 3.5,
         }]
     })
 
@@ -86,6 +97,13 @@ assert result["kind"] == "message" and result["role"] == "agent"
 assert "Grounded answer" in result["parts"][0]["text"]
 assert result["metadata"]["sources"] == ["doc.md"]
 assert result["contextId"]
+
+# the OpenRAG search was filtered to exactly this corpus's documents,
+# and the answer came from the configured OpenAI model
+search_calls = [j for u, j in calls if "api/search" in u]
+assert search_calls and search_calls[-1]["filters"] == {"filename": [OPENRAG_NAME]}, search_calls
+model_calls = [j for u, j in calls if "api.openai.com" in u]
+assert model_calls and model_calls[-1]["model"] == "gpt-4o-mini", model_calls
 
 # same context keeps history (second turn answers too)
 r = client.post("/", json={
@@ -125,9 +143,9 @@ assert r.status_code == 200 and "text/event-stream" in r.headers["content-type"]
 assert "Grounded answer" in r.text
 
 # extractive fallback (model call fails): snippets are cleaned of
-# Vertex highlight markup and HTML entities before reaching the user
+# highlight markup and HTML entities before reaching the user
 def fake_post_no_model(url, json=None, headers=None, timeout=None):
-    if "aiplatform" in url:
+    if "api.openai.com" in url:
         return Resp({"error": "unavailable"}, status=503)
     return fake_post(url, json=json, headers=headers, timeout=timeout)
 
@@ -167,6 +185,7 @@ with zipfile.ZipFile(docx_buffer, "w") as zf:
     )
 search_sources = agent_main.search_snippets("warranty?", {"uid": "user-123"}, None)
 assert search_sources[0]["scope"] == "users/user-123", search_sources
+assert search_sources[0]["title"] == "doc.md", search_sources
 
 resume_text = agent_main.extract_text("anujResume_2024.docx", docx_buffer.getvalue())
 assert "TECHNICAL SKILLS" in resume_text
@@ -186,15 +205,14 @@ assert "distributed systems design for resilient production services" in full_an
 assert "extractive mode" in full_answer
 agent_main.fetch_document_text = original_fetch
 
-# --- Gemini endpoint selection (API key route vs Vertex route) ---
-agent_main.GEMINI_API_KEY = ""
-url, headers = agent_main.gemini_endpoint()
-assert "aiplatform.googleapis.com" in url and "Authorization" in headers, (url, headers)
-agent_main.GEMINI_API_KEY = "test-key-123"
-url, headers = agent_main.gemini_endpoint()
-assert url == ("https://generativelanguage.googleapis.com/v1beta/models/"
-               "gemini-2.5-flash:generateContent"), url
-assert headers == {"x-goog-api-key": "test-key-123"}, headers
-agent_main.GEMINI_API_KEY = ""
+# no API key configured -> the model path is skipped, extractive answers
+agent_main.OPENAI_API_KEY = ""
+ans = agent_main.model_answer(
+    "warranty?",
+    [{"title": "doc.md", "snippets": ["The pump warranty is 2 years."], "scope": "users/user-123"}],
+    [],
+)
+assert "extractive mode" in ans, ans
+agent_main.OPENAI_API_KEY = "test-key"
 
 print("ALL AGENT TESTS PASSED")

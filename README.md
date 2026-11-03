@@ -12,9 +12,11 @@ individual path too. Built for GCP project `innovation-lab-2026`.
 - Both flavors also work from inside the user's own agent via the MCP
   server.
 
-Documents carry a scope key in `structData` — `org_id` for a business
-corpus, `user_id` for a personal one — and every search is filtered
-server-side to scopes the verified caller actually belongs to.
+Every document is stored in OpenRAG under a name derived from its
+scope + filename (`<docId>--<filename>`, docId = sha256 of
+`{scope}/{filename}`), and every search is filtered server-side to
+exactly the document names of a corpus the verified caller belongs
+to — businesses by `org_id`, personal corpora by Firebase uid.
 
 - **Platform / super admin:** Khoj.ai itself is the platform org (id
   `khoj`). Its admins are super admins: org signups start **pending**
@@ -25,14 +27,17 @@ server-side to scopes the verified caller actually belongs to.
   MCP vs web split, top corpora. Seed the first super admin with
   `python3 scripts/set_super_admin.py you@example.com`.
 
-- **Search/index:** Vertex AI Search (Agent Search). Every document is
-  imported with `structData.user_id` = the uploader's Firebase uid, and
-  every search is filtered server-side by the uid in the verified token.
-  One user's documents are invisible to everyone else.
+- **Search/index:** OpenRAG is the single retrieval engine (the same
+  stack the RAG POC evaluates). Uploads are ingested by OpenRAG under
+  their doc-id-prefixed names; searches filter to the caller's corpus
+  by filename. One user's documents are invisible to everyone else.
+  Chat answers are grounded by the A2A agent (`charts/khoj-agent`)
+  with an OpenAI model over the retrieved OpenRAG chunks (extractive
+  fallback when no key is configured).
 - **Auth:** Firebase Authentication (email/password). The backend
   verifies the Firebase ID token on every API and MCP call.
-- **MCP server:** `POST /mcp` (Streamable HTTP). Two tools:
-  `search_documents`, `list_my_documents`. Users paste the config from
+- **MCP server:** `POST /mcp` (Streamable HTTP). Three tools:
+  `search_documents`, `list_my_documents`, `list_my_corpora`. Users paste the config from
   the web UI ("Use Khoj in your agent") into Claude/Cursor/any MCP
   client; the Bearer token is their Firebase ID token (~1 h lifetime —
   grab a fresh config from the UI when it expires).
@@ -41,20 +46,20 @@ server-side to scopes the verified caller actually belongs to.
   backing services live in Google Secret Manager and sync into the
   cluster via External Secrets Operator (`deploy/external-secrets/`).
 - **Hosting:** no VM. Everything runs as containers on a GKE Autopilot
-  cluster, one Helm chart per service under `charts/` — `khoj` for this
-  product, plus the OpenRAG stack as the back-office POC (not in the
-  Khoj user path). `cloudbuild.yaml` builds and deploys on push to
-  `main`; the Apigee proxy bundle lives in `apigee/`.
+  cluster, one Helm chart per service under `charts/` — `khoj` and
+  `khoj-agent` for this product, plus the OpenRAG stack it runs on.
+  `cloudbuild.yaml` builds and deploys on push to `main` (manual
+  submit until the GitHub trigger is connected); the Apigee proxy
+  bundle lives in `apigee/`.
 
-Migration note: documents imported before per-user metadata existed
-(the 5 POC seed files, imported by hand in the console) carry no
-`user_id`, so filtered searches cannot see them. Re-upload them through
-the UI once and they join your corpus.
+The original uploaded files are also kept in the corpus bucket
+(`users/{uid}/…`, `orgs/{orgId}/…`) as cold copies — the source of
+truth for re-ingestion into OpenRAG.
 
 ## Run (local smoke test)
 
 ```bash
-cp .env.example .env   # fill in engine / data store / bucket / Firebase web config
+cp .env.example .env   # fill in bucket / OpenRAG URL / Firebase web config
 docker compose up -d --build
 # UI on http://<host>:8081
 ```
@@ -67,21 +72,23 @@ helm install khoj charts/khoj   # per-service, same pattern for charts/openrag-*
 
 ## GCP pieces (one-time)
 
-1. Enable the Discovery Engine API; create the corpus bucket.
-2. Create a Vertex AI Search app + unstructured data store; note the
-   engine + data store IDs for the chart values.
+1. Create the corpus bucket (original files / cold copies).
+2. Deploy the OpenRAG stack (`charts/openrag-*`) — it is the only
+   index; Khoj reaches it in-cluster at `http://openrag-backend:8000`.
 3. Add Firebase to the project; enable Email/Password sign-in; put the
    web config (`apiKey`, `authDomain`) in the chart values (public
    identifiers, not secrets).
 4. Grant the Workload Identity Google service account:
-   `roles/discoveryengine.viewer` (search), `roles/discoveryengine.editor`
-   (imports), `roles/storage.objectAdmin` on the corpus bucket, and
-   Firebase Admin access for token verification.
+   `roles/storage.objectAdmin` on the corpus bucket, Firestore access,
+   and Firebase Admin access for token verification.
+5. The chat agent's OpenAI key (same key OpenRAG uses) lives in Google
+   Secret Manager as `openrag-openai-api-key` and syncs into the
+   cluster via External Secrets Operator.
 
 ## Cost shape
 
-Vertex AI Search is ~$0 at POC scale (first 10k queries/month free;
-indexed data first 10 GB free), then $1.50 per 1,000 Standard queries
-($4.00 Enterprise with generative answers). Firebase Auth email/password
-and GKE Autopilot for one small service are effectively free at this
-scale; Apigee evaluation covers the proxy.
+OpenRAG runs on the same GKE Autopilot cluster (OpenSearch + Langflow
++ Docling) — no per-query search pricing; the only metered AI cost is
+the OpenAI usage OpenRAG and the chat agent already incur. Firebase
+Auth email/password is effectively free at this scale; Apigee
+evaluation covers the proxy.

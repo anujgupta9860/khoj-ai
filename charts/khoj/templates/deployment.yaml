@@ -22,14 +22,10 @@ spec:
           env:
             - name: GCP_PROJECT
               value: {{ .Values.gcp.project }}
-            - name: KHOJ_ENGINE_ID
-              value: {{ .Values.gcp.engineId }}
-            - name: KHOJ_DATASTORE_ID
-              value: {{ .Values.gcp.datastoreId }}
             - name: KHOJ_BUCKET
               value: {{ .Values.gcp.bucket }}
-            - name: KHOJ_LOCATION
-              value: {{ .Values.gcp.location }}
+            - name: OPENRAG_URL
+              value: {{ .Values.openrag.url }}
             - name: KHOJ_AGENT_URL
               value: {{ .Values.agent.url }}
             - name: FIREBASE_API_KEY
