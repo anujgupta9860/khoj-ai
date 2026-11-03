@@ -56,6 +56,10 @@ PROJECT = os.environ["GCP_PROJECT"]
 BUCKET = os.environ["KHOJ_BUCKET"]
 # OpenRAG is the single retrieval engine (in-cluster service).
 OPENRAG_URL = os.environ.get("OPENRAG_URL", "http://openrag-backend:8000")
+# NOTE: the OpenRAG backend serves UNPREFIXED routes (/search, /files,
+# /router/upload_ingest, /tasks/...). The /api/* prefix exists only on the
+# OpenRAG frontend's proxy (frontend/app/api/[...path] strips it). Calling
+# the backend with /api/* returns 404 - learned live 2026-11-03.
 
 FIREBASE_WEB_CONFIG = {
     "apiKey": os.environ.get("FIREBASE_API_KEY", ""),
@@ -210,7 +214,7 @@ def _openrag_search(query: str, filenames: list, limit: int = 40) -> list:
     """One OpenRAG chunk search, server-side filtered to the given
     document names. Returns raw chunk dicts (filename/text/score)."""
     resp = requests.post(
-        f"{OPENRAG_URL}/api/search",
+        f"{OPENRAG_URL}/search",
         json={"query": query, "filters": {"filename": filenames}, "limit": limit},
         timeout=30,
     )
@@ -291,7 +295,7 @@ def _openrag_files() -> dict:
     now = time.monotonic()
     if now - _files_cache["at"] < 5:
         return _files_cache["names"]
-    resp = requests.get(f"{OPENRAG_URL}/api/files", timeout=15)
+    resp = requests.get(f"{OPENRAG_URL}/files", timeout=15)
     if resp.status_code != 200:
         raise HTTPException(
             status_code=502, detail=f"List backend: {resp.text[:300]}"
@@ -312,7 +316,7 @@ def _openrag_task_error(task_id: str) -> str | None:
     it succeeded, is still running, or cannot be checked."""
     if not task_id:
         return None
-    for path in (f"/api/tasks/{task_id}", f"/api/v1/tasks/{task_id}"):
+    for path in (f"/tasks/{task_id}", f"/v1/tasks/{task_id}"):
         try:
             resp = requests.get(f"{OPENRAG_URL}{path}", timeout=10)
         except Exception:
@@ -697,7 +701,7 @@ def upload(
     doc_id = document_id(scope, filename)
     or_name = openrag_filename(doc_id, filename)
     resp = requests.post(
-        f"{OPENRAG_URL}/api/router/upload_ingest",
+        f"{OPENRAG_URL}/router/upload_ingest",
         files={"file": (or_name, io.BytesIO(data), mime)},
         timeout=120,
     )

@@ -45,6 +45,10 @@ PROJECT = os.environ.get("GCP_PROJECT", "innovation-lab-2026")
 BUCKET = os.environ.get("KHOJ_BUCKET", "khoj-ai-corpus-innovation-lab")
 # OpenRAG is the single retrieval engine (in-cluster service).
 OPENRAG_URL = os.environ.get("OPENRAG_URL", "http://openrag-backend:8000")
+# NOTE: the OpenRAG backend serves UNPREFIXED routes (/search, /files,
+# /router/upload_ingest, /tasks/...). The /api/* prefix exists only on the
+# OpenRAG frontend's proxy (frontend/app/api/[...path] strips it). Calling
+# the backend with /api/* returns 404 - learned live 2026-11-03.
 # Answer model: OpenAI (the same provider OpenRAG itself runs on).
 # Without a key the agent answers extractively from the source files.
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -141,7 +145,7 @@ def search_snippets(query: str, user: dict, org_id: str | None, page_size: int =
     if not by_name:
         return []
     resp = requests.post(
-        f"{OPENRAG_URL}/api/search",
+        f"{OPENRAG_URL}/search",
         json={
             "query": query,
             "filters": {"filename": sorted(by_name)},

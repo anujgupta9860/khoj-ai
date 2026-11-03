@@ -119,7 +119,8 @@ assert result["contextId"]
 
 # the OpenRAG search was filtered to exactly this corpus's documents,
 # and the answer came from the configured OpenAI model
-search_calls = [j for u, j in calls if "api/search" in u]
+from urllib.parse import urlsplit
+search_calls = [j for u, j in calls if urlsplit(u).path == "/search"]
 assert search_calls and search_calls[-1]["filters"] == {
     "filename": sorted([OPENRAG_NAME, GLOBAL_NAME])}, search_calls
 model_calls = [j for u, j in calls if "api.openai.com" in u]

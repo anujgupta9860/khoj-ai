@@ -199,10 +199,12 @@ upload_names = []
 
 
 def openrag_post(url, json=None, files=None, headers=None, timeout=None):
-    if url.endswith("/api/router/upload_ingest"):
+    from urllib.parse import urlsplit
+    path = urlsplit(url).path  # backend routes are unprefixed; /api/* is frontend-proxy only
+    if path == "/router/upload_ingest":
         upload_names.append(files["file"][0])
         return Resp({"task_id": "task-1"}, status=202)
-    if url.endswith("/api/search"):
+    if path == "/search":
         search_payloads.append(json)
         results = [
             {"filename": MINE_NAME, "text": "mine <b>text</b>&nbsp;here", "score": 2.0},
@@ -215,7 +217,9 @@ def openrag_post(url, json=None, files=None, headers=None, timeout=None):
 
 
 def openrag_get(url, params=None, headers=None, timeout=None):
-    if url.endswith("/api/files"):
+    from urllib.parse import urlsplit
+    path = urlsplit(url).path
+    if path == "/files":
         files = [{"filename": MINE_NAME, "chunk_count": 3},
                  {"filename": GLOBAL_NAME, "chunk_count": 5}]
         if CORPUS["biz_name"]:
