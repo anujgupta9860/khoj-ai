@@ -682,7 +682,13 @@ def upload(
     payload = {
         "gcsSource": {
             "inputUris": [f"gs://{BUCKET}/{meta_name}"],
-            "dataSchema": "custom",
+            # "document", NOT "custom": with "custom" Vertex parses each
+            # JSONL line as raw schema data and rejects it ("Custom
+            # Document Id (_id) was not found"); "document" parses the
+            # {id, structData, content} shape this app writes. Verified
+            # live 2026-11-02 (probe import: successCount 1, structData
+            # intact in index + search results).
+            "dataSchema": "document",
         },
         "reconciliationMode": "INCREMENTAL",
     }
