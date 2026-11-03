@@ -11,6 +11,21 @@ spec:
     metadata:
       labels: { app: opensearch }
     spec:
+      # Fresh PVCs arrive root-owned; OpenSearch (uid 1000) then cannot
+      # write its data dir (AccessDeniedException on .../data/nodes, the
+      # JVM stays up but never listens - exactly the VM deploy's chown
+      # lesson, GKE edition, Nov 3 2026). fsGroup covers new volumes; the
+      # initContainer chown covers volumes that already exist root-owned.
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+        - name: chown-data
+          image: {{ .Values.image }}
+          command: ["sh", "-c", "chown -R 1000:1000 /usr/share/opensearch/data"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - { name: data, mountPath: /usr/share/opensearch/data }
       containers:
         - name: opensearch
           image: {{ .Values.image }}
