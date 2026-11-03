@@ -6,6 +6,6 @@
   <HTTPTargetConnection>
     <!-- TODO after the GKE ingress is live: replace with the ingress
          hostname/IP for the khoj service (charts/khoj ingress). -->
-    <URL>https://khoj-ingress.placeholder.example.com</URL>
+    <URL>http://34.8.195.76</URL>
   </HTTPTargetConnection>
 </TargetEndpoint>
