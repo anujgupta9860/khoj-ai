@@ -473,9 +473,14 @@ async function loadDocs() {
   const resp = await fetch("/api/documents" + qs, { headers: { Authorization: "Bearer " + (await token()) } });
   if (!resp.ok) return;
   const docs = (await resp.json()).documents || [];
+  const chip = (d) => d.status === "ready" ? "✓ ready"
+    : d.status === "failed" ? "✗ failed" : "⏳ indexing";
   $("doclist").innerHTML = docs.length
-    ? "Indexed: " + docs.map((d) => d.title).join(", ")
+    ? docs.map((d) =>
+        `<div>${d.title} <span class="muted">— ${chip(d)}${d.error ? " (" + d.error + ")" : ""}</span></div>`
+      ).join("")
     : "No documents yet — upload your first one above.";
+  if (docs.some((d) => d.status === "indexing")) setTimeout(loadDocs, 10000);
 }
 
 async function doSearch() {

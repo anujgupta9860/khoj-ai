@@ -235,7 +235,8 @@ def run_search(
     return out
 
 
-def list_documents(user: dict, org_id: str | None = None) -> list:
+def _indexed_documents(user: dict, org_id: str | None = None) -> dict:
+    """Documents already present in the search index for this corpus."""
     if org_id:
         org_role(user, org_id)
         org_active(user, org_id)
@@ -243,7 +244,7 @@ def list_documents(user: dict, org_id: str | None = None) -> list:
     else:
         key, want = "user_id", user["uid"]
     url = f"{DE_BASE}/dataStores/{DATASTORE_ID}/branches/0/documents"
-    mine, token = [], None
+    mine, token = {}, None
     for _ in range(5):  # cap the scan at POC scale
         params = {"pageSize": 100}
         if token:
@@ -255,14 +256,67 @@ def list_documents(user: dict, org_id: str | None = None) -> list:
         for d in data.get("documents", []):
             struct = d.get("structData", {})
             if struct.get(key) == want:
-                mine.append({
-                    "id": d.get("id", ""),
-                    "title": struct.get("title") or d.get("id", ""),
-                })
+                mine[d.get("id", "")] = struct.get("title") or d.get("id", "")
         token = data.get("nextPageToken")
         if not token:
             break
     return mine
+
+
+def _operation_error(operation: str) -> str | None:
+    """Error message when a Vertex import operation finished with an
+    error; None when it is still running, finished cleanly, or cannot
+    be checked."""
+    if not operation:
+        return None
+    try:
+        resp = requests.get(
+            f"https://discoveryengine.googleapis.com/v1/{operation}",
+            headers=_headers(), timeout=15,
+        )
+        if resp.status_code != 200:
+            return None
+        err = resp.json().get("error")
+        if err:
+            return str(err.get("message", "import failed"))[:200]
+    except Exception:
+        pass
+    return None
+
+
+def list_documents(user: dict, org_id: str | None = None) -> list:
+    """Every file in this corpus, each with an ingestion status: a file
+    appears the moment it is uploaded ('indexing'), flips to 'ready'
+    once the search index contains it, or shows 'failed' when its
+    import operation reports an error."""
+    indexed = _indexed_documents(user, org_id)
+    scope_key = f"org:{org_id}" if org_id else f"user:{user['uid']}"
+    try:
+        records = org_service().list_uploads(scope_key)
+    except Exception:
+        records = []
+    out = {}
+    for rec in records:
+        doc_id = rec.get("docId", "")
+        if doc_id in indexed:
+            out[doc_id] = {
+                "id": doc_id,
+                "title": rec.get("filename") or indexed[doc_id],
+                "status": "ready",
+            }
+            continue
+        error = _operation_error(rec.get("operation", ""))
+        item = {
+            "id": doc_id,
+            "title": rec.get("filename") or doc_id,
+            "status": "failed" if error else "indexing",
+        }
+        if error:
+            item["error"] = error
+        out[doc_id] = item
+    for doc_id, title in indexed.items():
+        out.setdefault(doc_id, {"id": doc_id, "title": title, "status": "ready"})
+    return sorted(out.values(), key=lambda d: d["title"].lower())
 
 
 class SearchBody(BaseModel):
@@ -557,6 +611,18 @@ def upload(
     resp = requests.post(import_url, json=payload, headers=_headers(), timeout=30)
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Import trigger: {resp.text[:300]}")
+    try:
+        org_service().record_upload({
+            "docId": doc_id,
+            "scopeKey": f"org:{orgId}" if orgId else f"user:{user['uid']}",
+            "uid": user["uid"],
+            "orgId": orgId,
+            "filename": filename,
+            "operation": resp.json().get("name", ""),
+            "uploadedAt": int(time.time()),
+        })
+    except Exception:
+        pass  # status tracking is best-effort; the upload itself succeeded
     log_event(
         kind="upload",
         uid=user["uid"],

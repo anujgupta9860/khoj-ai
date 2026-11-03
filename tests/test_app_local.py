@@ -215,15 +215,30 @@ main._org_service.set_org_status(ORG_ID, "approved")
 r = client.get("/api/orgs", headers=H)
 assert [o["id"] for o in r.json()["orgs"]] == [ORG_ID]
 
+# --- file list: every upload appears at once, with an ingestion status -----
+r = client.post(
+    "/api/upload",
+    files={"file": ("status.md", io.BytesIO(b"# s"), "text/markdown")},
+    headers=H,
+)
+assert r.status_code == 200, r.text
+new_doc = r.json()["documentId"]
+r = client.get("/api/documents", headers=H)
+docs = {d["id"]: d for d in r.json()["documents"]}
+assert docs["d1"]["status"] == "ready", docs         # already in the index
+assert docs[new_doc]["status"] == "indexing", docs   # uploaded, not indexed yet
+assert docs[new_doc]["title"] == "status.md", docs
+
 # personal search uses the user filter; org search uses the org filter
 client.post("/api/search", json={"query": "q"}, headers=H)
 assert search_payloads[-1]["filter"] == 'user_id: ANY("user-123")'
 client.post("/api/search", json={"query": "q", "orgId": ORG_ID}, headers=H)
 assert search_payloads[-1]["filter"] == f'org_id: ANY("{ORG_ID}")'
 
-# document listing is scoped the same way
+# document listing is scoped the same way (status.md is the same user's
+# upload from the status test above; biz.md must NOT leak into this list)
 r = client.get("/api/documents", headers=H)
-assert [d["title"] for d in r.json()["documents"]] == ["mine.md"]
+assert [d["title"] for d in r.json()["documents"]] == ["mine.md", "status.md"]
 r = client.get(f"/api/documents?orgId={ORG_ID}", headers=H)
 assert [d["title"] for d in r.json()["documents"]] == ["biz.md"]
 

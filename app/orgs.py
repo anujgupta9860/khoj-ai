@@ -140,6 +140,18 @@ class FirestoreOrgService:
         )
         return [s.to_dict() for s in snaps]
 
+    # -- file uploads (ingestion status tracking) ---------------------------
+    def record_upload(self, rec: dict) -> None:
+        self.db.collection("file_uploads").document(rec["docId"]).set(rec)
+
+    def list_uploads(self, scope_key: str) -> list:
+        snaps = (
+            self.db.collection("file_uploads")
+            .where("scopeKey", "==", scope_key)
+            .get()
+        )
+        return [s.to_dict() for s in snaps]
+
     # -- invites -----------------------------------------------------------
     def create_invite(self, org_id: str, email: str, role: str, invited_by: str, secret_hash: str) -> dict:
         ref = self._org(org_id).collection("invites").document()
@@ -190,6 +202,7 @@ class InMemoryOrgService:
     def __init__(self):
         self.orgs = {}
         self._events = []
+        self.uploads = {}
         self._seq = 0
 
     def _new_id(self, prefix):
@@ -280,6 +293,12 @@ class InMemoryOrgService:
 
     def list_events(self, limit: int = 200) -> list:
         return sorted(self._events, key=lambda e: e["ts"], reverse=True)[:limit]
+
+    def record_upload(self, rec: dict) -> None:
+        self.uploads[rec["docId"]] = dict(rec)
+
+    def list_uploads(self, scope_key: str) -> list:
+        return [dict(r) for r in self.uploads.values() if r.get("scopeKey") == scope_key]
 
     def create_invite(self, org_id: str, email: str, role: str, invited_by: str, secret_hash: str) -> dict:
         invite_id = self._new_id("inv")
