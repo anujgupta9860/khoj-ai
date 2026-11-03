@@ -471,6 +471,22 @@ def extractive_answer(question: str, sources: list) -> str:
     return "\n\n".join(chunks) + "\n\n(chat is running in extractive mode right now)"
 
 
+_REFUSAL_MARKERS = (
+    "do not contain",
+    "does not contain",
+    "don't contain",
+    "not contain information",
+    "couldn't find",
+    "could not find",
+    "no information about",
+)
+
+
+def _looks_like_refusal(text: str) -> bool:
+    low = (text or "").lower()
+    return any(m in low for m in _REFUSAL_MARKERS)
+
+
 def model_answer(question: str, sources: list, history: list) -> str:
     """Ground an OpenAI answer on the retrieved chunks. Falls back to
     an extractive answer when no key is configured or the model call
@@ -490,17 +506,22 @@ def model_answer(question: str, sources: list, history: list) -> str:
     prompt = (
         "You are Khoj, a document assistant. Answer the question using ONLY "
         "the document excerpts below. Cite excerpts inline like [1], [2]. "
-        "If the excerpts do not contain the answer, say so plainly. Be "
-        "concise and direct.\n\n"
+        "Some excerpts are complete documents: read them in full before "
+        "concluding anything is missing. Forms and statements often list "
+        "field names and their amounts separately, sometimes in matching "
+        "order - pair them up and answer from the values you find. Only "
+        "say the information is not there if it is truly absent from every "
+        "excerpt. Be concise and direct.\n\n"
         f"Conversation so far:\n{history_text or '(none)'}\n\n"
         f"Document excerpts:\n{excerpts}\n\nQuestion: {question}"
     )
-    try:
+
+    def _ask(p: str) -> str:
         resp = requests.post(
             "https://api.openai.com/v1/chat/completions",
             json={
                 "model": OPENAI_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [{"role": "user", "content": p}],
                 "temperature": 0.2,
             },
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
@@ -508,10 +529,29 @@ def model_answer(question: str, sources: list, history: list) -> str:
         )
         if resp.status_code != 200:
             raise RuntimeError(resp.text[:200])
-        text = resp.json()["choices"][0]["message"]["content"].strip()
-        if text:
-            return text
-        raise RuntimeError("Model returned an empty answer")
+        return resp.json()["choices"][0]["message"]["content"].strip()
+
+    try:
+        text = _ask(prompt)
+        if not text:
+            raise RuntimeError("Model returned an empty answer")
+        if _looks_like_refusal(text):
+            # One firmer pass: gpt-4o-mini refuses too eagerly on
+            # form-like documents whose values sit apart from their
+            # labels, even when handed the full text (diagnosed live
+            # 2026-11-03). OpenRAG's own chat avoids this by iterating;
+            # this retry is Khoj's equivalent second look.
+            retry = _ask(
+                prompt
+                + "\n\nRe-read every excerpt completely, including any "
+                "complete document text. Pair field-name lists with "
+                "amount lists (in order when the document presents them "
+                "that way) and answer with the specific figures if they "
+                "appear anywhere in the excerpts."
+            )
+            if retry and not _looks_like_refusal(retry):
+                return retry
+        return text
     except Exception as e:
         print(f"model_answer: falling back to extractive mode: {e!r}", flush=True)
     return extractive_answer(question, sources)

@@ -64,11 +64,21 @@ class Resp:
         return self._payload
 
 
+RETRY_PROBE = {"armed": False, "answers": 0}
+
+
 def fake_post(url, json=None, headers=None, timeout=None):
     calls.append((url, json))
     if "api.openai.com" in url:
         if "Rewrite the user's latest message" in (json or {}).get("messages", [{}])[0].get("content", ""):
             return Resp({"choices": [{"message": {"content": "pump warranty years coverage"}}]})
+        if RETRY_PROBE["armed"]:
+            RETRY_PROBE["answers"] += 1
+            if RETRY_PROBE["answers"] == 1:
+                return Resp({"choices": [{"message": {"content":
+                    "The excerpts do not contain information about that."}}]})
+            return Resp({"choices": [{"message": {"content":
+                "Recovered answer with figures [1]."}}]})
         return Resp({"choices": [{"message": {"content": "Grounded answer [1]."}}]})
     # OpenRAG chunk search
     return Resp({
@@ -154,6 +164,23 @@ answer_prompts = [
 ]
 assert answer_prompts and "FULLTEXT MARKER" in answer_prompts[-1], answer_prompts
 agent_main.fetch_document_text = real_fetch
+calls.clear()
+
+# a first-pass refusal triggers ONE firmer retry, whose answer wins
+RETRY_PROBE["armed"] = True
+calls.clear()
+r = client.post("/", json={
+    "jsonrpc": "2.0", "id": 31, "method": "message/send",
+    "params": {"message": {
+        "kind": "message", "role": "user", "messageId": "m-retry",
+        "parts": [{"kind": "text", "text": "What are the deduction amounts?"}],
+    }},
+}, headers=H)
+assert r.status_code == 200, r.text
+probe_text = r.json()["result"]["parts"][0]["text"]
+assert "Recovered answer with figures" in probe_text, probe_text
+assert RETRY_PROBE["answers"] == 2, RETRY_PROBE
+RETRY_PROBE["armed"] = False
 calls.clear()
 
 # same context keeps history (second turn answers too)
