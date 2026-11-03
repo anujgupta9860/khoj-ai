@@ -1,0 +1,14 @@
+{{- if .Values.persistence.enabled }}
+{{- range .Values.stateMounts }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .claimName }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .size }}
+---
+{{- end }}
+{{- end }}

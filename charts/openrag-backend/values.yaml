@@ -18,6 +18,18 @@ persistence:
   enabled: true
   size: 10Gi
   mountPath: /app/openrag-documents
+# Upstream compose bind-mounts FIVE backend state dirs; the chart
+# originally persisted only openrag-documents. With /app/keys and
+# /app/config ephemeral, every pod restart regenerated the JWT signing
+# keys and forgot the synced Langflow flow IDs - presenting live as
+# OpenSearch 401s on search and "Flow identifier ... not found" on
+# ingestion (Nov 3 2026). Persist them like upstream does.
+# (/app/flows is deliberately NOT mounted: an empty PVC would shadow
+# the flow JSONs bundled in the image.)
+stateMounts:
+  - { name: keys, claimName: openrag-keys, mountPath: /app/keys, size: 1Gi }
+  - { name: config, claimName: openrag-config, mountPath: /app/config, size: 1Gi }
+  - { name: data, claimName: openrag-data, mountPath: /app/data, size: 5Gi }
 resources:
   requests: { cpu: "500m", memory: "1Gi" }
   limits: { cpu: "2", memory: "4Gi" }

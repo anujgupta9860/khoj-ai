@@ -50,9 +50,16 @@ spec:
           {{- if .Values.persistence.enabled }}
           volumeMounts:
             - { name: documents, mountPath: {{ .Values.persistence.mountPath }} }
+            {{- range .Values.stateMounts }}
+            - { name: {{ .name }}, mountPath: {{ .mountPath }} }
+            {{- end }}
           {{- end }}
       {{- if .Values.persistence.enabled }}
       volumes:
         - name: documents
           persistentVolumeClaim: { claimName: openrag-documents }
+        {{- range .Values.stateMounts }}
+        - name: {{ .name }}
+          persistentVolumeClaim: { claimName: {{ .claimName }} }
+        {{- end }}
       {{- end }}
