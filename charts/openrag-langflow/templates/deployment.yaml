@@ -10,6 +10,11 @@ spec:
     metadata:
       labels: { app: langflow }
     spec:
+      # Kubernetes would otherwise inject LANGFLOW_PORT=tcp://<svc-ip>:7860
+      # for the Service named "langflow", and Langflow's Settings parses
+      # LANGFLOW_PORT as its integer listen port -> pydantic ValidationError
+      # crash loop (seen on first GKE install, Nov 3 2026).
+      enableServiceLinks: false
       containers:
         - name: langflow
           image: {{ .Values.image }}
