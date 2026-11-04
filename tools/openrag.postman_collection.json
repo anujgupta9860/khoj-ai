@@ -1,0 +1,2667 @@
+{
+  "info": {
+    "_postman_id": "0617b76f-c0ef-4d6a-88c5-87efce635e39",
+    "name": "OpenRAG API",
+    "description": "Every backend route of OpenRAG (from src/app/routes/internal.py, upstream v0.3.0), with the equivalent curl in each request's description.\n\nBASE URL \u2014 one collection variable, `baseUrl`:\n- Through the app (frontend proxy): baseUrl = http://34.102.202.103/api  (the frontend strips the /api prefix before hitting the backend)\n- Direct to the backend (kubectl port-forward, in-cluster, local Docker): baseUrl = http://localhost:8000  (backend routes are UNPREFIXED \u2014 no /api)\n\nAuth: the GKE deployment runs in no-auth mode (no Google OAuth client configured), so no headers are needed. On an authenticated deployment, sign in via the UI first \u2014 the API rides the session cookie.\n\nOther variables: {{taskId}} (from an upload_ingest response), {{filterId}} (from a create-filter response).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://34.102.202.103/api",
+      "type": "string",
+      "description": "Host root. Via the app UI proxy include /api (default). Direct to the backend use the backend root with NO /api, e.g. http://localhost:8000 or http://openrag-backend:8000 in-cluster."
+    },
+    {
+      "key": "taskId",
+      "value": "",
+      "type": "string",
+      "description": "Ingestion task id returned by POST /router/upload_ingest."
+    },
+    {
+      "key": "filterId",
+      "value": "",
+      "type": "string",
+      "description": "Knowledge filter id returned by POST /knowledge-filter."
+    }
+  ],
+  "item": [
+    {
+      "name": "Health & Status",
+      "item": [
+        {
+          "name": "Backend health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/health\""
+          },
+          "response": []
+        },
+        {
+          "name": "OpenSearch health (ready)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/search/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "search",
+                "health"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/search/health\""
+          },
+          "response": []
+        },
+        {
+          "name": "Docling health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/docling/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "docling",
+                "health"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/docling/health\""
+          },
+          "response": []
+        },
+        {
+          "name": "Provider health (LLM + embedding)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/provider/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "provider",
+                "health"
+              ]
+            },
+            "description": "Which chat/embedding providers are configured and healthy. Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/provider/health\""
+          },
+          "response": []
+        },
+        {
+          "name": "Console status (all components)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "status"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/status\""
+          },
+          "response": []
+        },
+        {
+          "name": "Component logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/status/{component}/logs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "status",
+                "{component}",
+                "logs"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/status/opensearch/logs\""
+          },
+          "response": []
+        },
+        {
+          "name": "Component diagnose",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/status/{component}/diagnose",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "status",
+                "{component}",
+                "diagnose"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/status/opensearch/diagnose\""
+          },
+          "response": []
+        },
+        {
+          "name": "Component sync",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/status/{component}/sync",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "status",
+                "{component}",
+                "sync"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/status/opensearch/sync\""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth & User",
+      "item": [
+        {
+          "name": "Current user + permissions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "me"
+              ]
+            },
+            "description": "Profile, roles and the permission list the UI gates on (e.g. chat:use, search:use). Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/users/me\""
+          },
+          "response": []
+        },
+        {
+          "name": "My permissions only",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/me/permissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "me",
+                "permissions"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/users/me/permissions\""
+          },
+          "response": []
+        },
+        {
+          "name": "Auth: current session user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/auth/me\""
+          },
+          "response": []
+        },
+        {
+          "name": "Auth: init login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "init"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/auth/init\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Auth: OAuth callback",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/callback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "callback"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/auth/callback\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"code\": \"...\", \"state\": \"...\"}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"...\",\n  \"state\": \"...\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Auth: logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/auth/logout\""
+          },
+          "response": []
+        },
+        {
+          "name": "Auth: IBM login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/ibm/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "ibm",
+                "login"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/auth/ibm/login\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "OIDC discovery document",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/.well-known/openid-configuration",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                ".well-known",
+                "openid-configuration"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/.well-known/openid-configuration\""
+          },
+          "response": []
+        },
+        {
+          "name": "OIDC JWKS",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/jwks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "jwks"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/auth/jwks\""
+          },
+          "response": []
+        },
+        {
+          "name": "OIDC token introspect",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/introspect",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "introspect"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/auth/introspect\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"token\": \"...\"}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"...\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Search",
+      "item": [
+        {
+          "name": "Search chunks (POST /search)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/search",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "search"
+              ]
+            },
+            "description": "The core retrieval call \u2014 this is what Khoj uses. filters can carry a filename whitelist, e.g. {\"filename\": [\"doc-abc--file.pdf\"]}. resultMode: chunks | knowledge_sources | website_pages.\n\nEquivalent curl:\n\ncurl -X POST \"{{baseUrl}}/search\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"query\": \"What deductions are on the W-2?\", \"filters\": {}, \"limit\": 10, \"scoreThreshold\": 0, \"resultMode\": \"chunks\"}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"What deductions are on the W-2?\",\n  \"filters\": {},\n  \"limit\": 10,\n  \"scoreThreshold\": 0,\n  \"resultMode\": \"chunks\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Search files by name",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/files/search",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "files",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "w2"
+                }
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/files/search?search=w2\""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Chat",
+      "item": [
+        {
+          "name": "Chat (POST /chat)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/chat",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "chat"
+              ]
+            },
+            "description": "Field is `prompt` \u2014 sending `message` returns 422. Optional: conversation_id (thread), filter_id (restrict to a knowledge filter), filters, stream.\n\nEquivalent curl:\n\ncurl -X POST \"{{baseUrl}}/chat\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"prompt\": \"Summarize the uploaded document.\", \"stream\": false, \"limit\": 10, \"scoreThreshold\": 0}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prompt\": \"Summarize the uploaded document.\",\n  \"stream\": false,\n  \"limit\": 10,\n  \"scoreThreshold\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Chat via Langflow endpoint",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/langflow",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "langflow"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/langflow\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"prompt\": \"Summarize the uploaded document.\", \"stream\": false, \"limit\": 10, \"scoreThreshold\": 0}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prompt\": \"Summarize the uploaded document.\",\n  \"stream\": false,\n  \"limit\": 10,\n  \"scoreThreshold\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Chat history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/chat/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "chat",
+                "history"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/chat/history\""
+          },
+          "response": []
+        },
+        {
+          "name": "Langflow chat history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/langflow/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "langflow",
+                "history"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/langflow/history\""
+          },
+          "response": []
+        },
+        {
+          "name": "Delete one chat session",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sessions/{session_id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{session_id}"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X DELETE \"{{baseUrl}}/sessions/<session_id>\""
+          },
+          "response": []
+        },
+        {
+          "name": "Bulk delete chat sessions",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sessions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X DELETE \"{{baseUrl}}/sessions\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"session_ids\": [\"...\"]}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_ids\": [\n    \"...\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create nudge",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nudges",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nudges"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/nudges\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Nudge in a chat",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nudges/{chat_id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nudges",
+                "{chat_id}"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/nudges/<chat_id>\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Files & Documents",
+      "item": [
+        {
+          "name": "List files (GET /files)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/files",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "files"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "100"
+                },
+                {
+                  "key": "sort_by",
+                  "value": "filename"
+                },
+                {
+                  "key": "sort_order",
+                  "value": "asc"
+                }
+              ]
+            },
+            "description": "The file list is computed from chunk metadata in OpenSearch \u2014 per file: filename, chunks, indexed_time. This is the API behind Khoj's Super Admin matrix. Supports pagination (page, page_size), sort_by/sort_order, and filters incl. data_sources (repeatable filename whitelist).\n\nEquivalent curl:\n\ncurl -X GET \"{{baseUrl}}/files?page=1&page_size=100\""
+          },
+          "response": []
+        },
+        {
+          "name": "Check filename exists",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/documents/check-filename",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "check-filename"
+              ],
+              "query": [
+                {
+                  "key": "filename",
+                  "value": "document.pdf"
+                }
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/documents/check-filename?filename=doc.pdf\""
+          },
+          "response": []
+        },
+        {
+          "name": "Delete document by filename",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/documents/delete-by-filename",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "delete-by-filename"
+              ]
+            },
+            "description": "Deletes every chunk for that exact (scoped) filename. There is no DELETE /files/{id} route.\n\nEquivalent curl:\n\ncurl -X POST \"{{baseUrl}}/documents/delete-by-filename\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"filename\": \"doc-abc--file.pdf\"}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"doc-abc--file.pdf\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Ingestion & Tasks",
+      "item": [
+        {
+          "name": "Upload + ingest (POST /router/upload_ingest)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/router/upload_ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "router",
+                "upload_ingest"
+              ]
+            },
+            "description": "Multipart upload \u2014 the endpoint Khoj's web app uses. Returns a task id to poll. Form fields: file (repeatable), replace_duplicates, create_filter, preview, settings (JSON), tweaks (JSON).\n\nEquivalent curl:\n\ncurl -X POST \"{{baseUrl}}/router/upload_ingest\" \\\n  -F \"file=@/path/to/document.pdf\" -F \"replace_duplicates=true\" -F \"create_filter=false\"",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "replace_duplicates",
+                  "value": "true",
+                  "type": "text"
+                },
+                {
+                  "key": "create_filter",
+                  "value": "false",
+                  "type": "text"
+                },
+                {
+                  "key": "preview",
+                  "value": "false",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Upload + ingest (Langflow route)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/langflow/upload_ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "langflow",
+                "upload_ingest"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/langflow/upload_ingest\" \\\n  -F \"file=@/path/to/document.pdf\" -F \"replace_duplicates=true\" -F \"create_filter=false\"",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Ingest already-uploaded files",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/langflow/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "langflow",
+                "ingest"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/langflow/ingest\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Upload file to Langflow only",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/langflow/files/upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "langflow",
+                "files",
+                "upload"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/langflow/files/upload\" \\\n  -F \"file=@/path/to/document.pdf\" -F \"replace_duplicates=true\" -F \"create_filter=false\"",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Langflow files",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/langflow/files",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "langflow",
+                "files"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X DELETE \"{{baseUrl}}/langflow/files\""
+          },
+          "response": []
+        },
+        {
+          "name": "Upload with context",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/upload_context",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "upload_context"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/upload_context\" \\\n  -F \"file=@/path/to/document.pdf\" -F \"replace_duplicates=true\" -F \"create_filter=false\"",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Upload from server path",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/upload_path",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "upload_path"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/upload_path\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"paths\": [\"/data/docs\"]}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paths\": [\n    \"/data/docs\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Upload options",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/upload_options",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "upload_options"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/upload_options\""
+          },
+          "response": []
+        },
+        {
+          "name": "Upload from bucket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/upload_bucket",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "upload_bucket"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/upload_bucket\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Ingest raw chunks (internal)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/internal/ingest/chunks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "ingest",
+                "chunks"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/internal/ingest/chunks\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"chunks\": []}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chunks\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Task status (GET /tasks/{taskId})",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}"
+              ]
+            },
+            "description": "Poll after upload_ingest until the task completes. Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/tasks/<task_id>\""
+          },
+          "response": []
+        },
+        {
+          "name": "Task status (enhanced)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/enhanced",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}",
+                "enhanced"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/tasks/<task_id>/enhanced\""
+          },
+          "response": []
+        },
+        {
+          "name": "List all tasks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tasks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/tasks\""
+          },
+          "response": []
+        },
+        {
+          "name": "List tasks (enhanced)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tasks/enhanced",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "enhanced"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/tasks/enhanced\""
+          },
+          "response": []
+        },
+        {
+          "name": "Retry a task",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/retry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}",
+                "retry"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/tasks/<task_id>/retry\""
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel a task",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}",
+                "cancel"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/tasks/<task_id>/cancel\""
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel files in a task",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}/files/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}",
+                "files",
+                "cancel"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/tasks/<task_id>/files/cancel\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete a task",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X DELETE \"{{baseUrl}}/tasks/<task_id>\""
+          },
+          "response": []
+        },
+        {
+          "name": "Delete all tasks",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tasks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X DELETE \"{{baseUrl}}/tasks\""
+          },
+          "response": []
+        },
+        {
+          "name": "Ingest preview \u2014 Docling output",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ingest/preview/{{taskId}}/docling",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest",
+                "preview",
+                "{{taskId}}",
+                "docling"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/ingest/preview/<task_id>/docling\""
+          },
+          "response": []
+        },
+        {
+          "name": "Ingest preview \u2014 index proof",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ingest/preview/{{taskId}}/index-proof",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest",
+                "preview",
+                "{{taskId}}",
+                "index-proof"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/ingest/preview/<task_id>/index-proof\""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Knowledge Filters",
+      "item": [
+        {
+          "name": "Create knowledge filter",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/knowledge-filter",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "knowledge-filter"
+              ]
+            },
+            "description": "Returns 201. OpenRAG's own convention is one filter per uploaded document (data_sources = [filename], name = filename minus extension). Khoj auto-creates one per upload.\n\nEquivalent curl:\n\ncurl -X POST \"{{baseUrl}}/knowledge-filter\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"name\": \"2024 W2\", \"description\": \"\", \"queryData\": {\"query\": \"\", \"filters\": {\"data_sources\": [\"doc-abc--2024 W2.pdf\"], \"document_types\": [], \"owners\": [], \"connector_types\": []}, \"limit\": 100, \"scoreThreshold\": 0}, \"allowedUsers\": [], \"allowedGroups\": []}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"2024 W2\",\n  \"description\": \"\",\n  \"queryData\": {\n    \"query\": \"\",\n    \"filters\": {\n      \"data_sources\": [\n        \"doc-abc--2024 W2.pdf\"\n      ],\n      \"document_types\": [],\n      \"owners\": [],\n      \"connector_types\": []\n    },\n    \"limit\": 100,\n    \"scoreThreshold\": 0\n  },\n  \"allowedUsers\": [],\n  \"allowedGroups\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Search within filters",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/knowledge-filter/search",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "knowledge-filter",
+                "search"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/knowledge-filter/search\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"query\": \"w2\", \"limit\": 20}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"w2\",\n  \"limit\": 20\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get one filter",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/knowledge-filter/{{filterId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "knowledge-filter",
+                "{{filterId}}"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/knowledge-filter/<filter_id>\""
+          },
+          "response": []
+        },
+        {
+          "name": "Update a filter",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/knowledge-filter/{{filterId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "knowledge-filter",
+                "{{filterId}}"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X PUT \"{{baseUrl}}/knowledge-filter/<filter_id>\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"name\": \"New name\"}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"New name\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete a filter",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/knowledge-filter/{{filterId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "knowledge-filter",
+                "{{filterId}}"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X DELETE \"{{baseUrl}}/knowledge-filter/<filter_id>\""
+          },
+          "response": []
+        },
+        {
+          "name": "Subscribe to a filter",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/knowledge-filter/{{filterId}}/subscribe",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "knowledge-filter",
+                "{{filterId}}",
+                "subscribe"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/knowledge-filter/<filter_id>/subscribe\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List filter subscriptions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/knowledge-filter/{{filterId}}/subscriptions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "knowledge-filter",
+                "{{filterId}}",
+                "subscriptions"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/knowledge-filter/<filter_id>/subscriptions\""
+          },
+          "response": []
+        },
+        {
+          "name": "Delete a subscription",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/knowledge-filter/{{filterId}}/subscribe/{subscription_id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "knowledge-filter",
+                "{{filterId}}",
+                "subscribe",
+                "{subscription_id}"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X DELETE \"{{baseUrl}}/knowledge-filter/<filter_id>/subscribe/<subscription_id>\""
+          },
+          "response": []
+        },
+        {
+          "name": "Filter webhook callback",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/knowledge-filter/{{filterId}}/webhook/{subscription_id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "knowledge-filter",
+                "{{filterId}}",
+                "webhook",
+                "{subscription_id}"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/knowledge-filter/<filter_id>/webhook/<subscription_id>\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Settings & Onboarding",
+      "item": [
+        {
+          "name": "Get settings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings"
+              ]
+            },
+            "description": "Agent model/provider, knowledge (embedding model, chunk size/overlap, OCR), onboarding state. Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/settings\""
+          },
+          "response": []
+        },
+        {
+          "name": "Update settings",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/settings\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Run onboarding step",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/onboarding",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "onboarding"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/onboarding\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Onboarding state",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/onboarding/state",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "onboarding",
+                "state"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/onboarding/state\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Onboarding rollback",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/onboarding/rollback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "onboarding",
+                "rollback"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/onboarding/rollback\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Set Docling preset",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/docling-preset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "docling-preset"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X PATCH \"{{baseUrl}}/settings/docling-preset\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Flow updates available?",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/settings/flows/updates-available",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "flows",
+                "updates-available"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/settings/flows/updates-available\""
+          },
+          "response": []
+        },
+        {
+          "name": "Update flows",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/flows/update",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "flows",
+                "update"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/settings/flows/update\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Dismiss flow update",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/flows/dismiss-update",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "flows",
+                "dismiss-update"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/settings/flows/dismiss-update\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Reset a flow",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/reset-flow/{flow_type}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reset-flow",
+                "{flow_type}"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/reset-flow/ingest\""
+          },
+          "response": []
+        },
+        {
+          "name": "Refresh built-in OpenRAG docs",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/openrag-docs/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "openrag-docs",
+                "refresh"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/openrag-docs/refresh\""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Models & Providers",
+      "item": [
+        {
+          "name": "Configured providers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/models/providers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "models",
+                "providers"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/models/providers\""
+          },
+          "response": []
+        },
+        {
+          "name": "Model catalog",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/models/catalog",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "models",
+                "catalog"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/models/catalog\""
+          },
+          "response": []
+        },
+        {
+          "name": "Ollama models",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/models/ollama",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "models",
+                "ollama"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/models/ollama\""
+          },
+          "response": []
+        },
+        {
+          "name": "Validate/list OpenAI models",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/models/openai",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "models",
+                "openai"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/models/openai\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Validate/list Anthropic models",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/models/anthropic",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "models",
+                "anthropic"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/models/anthropic\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "IBM models",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/models/ibm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "models",
+                "ibm"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/models/ibm\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "watsonx on-prem spaces",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/models/watsonx_onprem/spaces",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "models",
+                "watsonx_onprem",
+                "spaces"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/models/watsonx_onprem/spaces\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Discover models for a provider",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/models/{provider}/discover",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "models",
+                "{provider}",
+                "discover"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/models/openai/discover\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "API Keys (for /v1 routes)",
+      "item": [
+        {
+          "name": "List API keys",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/keys",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "keys"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/keys\""
+          },
+          "response": []
+        },
+        {
+          "name": "Create API key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/keys",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "keys"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/keys\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"name\": \"my-key\"}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"my-key\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete API key",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/keys/{key_id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "keys",
+                "{key_id}"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X DELETE \"{{baseUrl}}/keys/<key_id>\""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Connectors",
+      "item": [
+        {
+          "name": "List connectors",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/connectors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/connectors\""
+          },
+          "response": []
+        },
+        {
+          "name": "Workspace policy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/workspace-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "workspace-policy"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/connectors/workspace-policy\""
+          },
+          "response": []
+        },
+        {
+          "name": "My connector access",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/user-access",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "user-access"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/connectors/user-access\""
+          },
+          "response": []
+        },
+        {
+          "name": "Update my connector access",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/user-access",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "user-access"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X PUT \"{{baseUrl}}/connectors/user-access\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "OAuth config",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/oauth-config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "oauth-config"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/connectors/oauth-config\""
+          },
+          "response": []
+        },
+        {
+          "name": "Set OAuth credential",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/oauth-config/{credential_key}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "oauth-config",
+                "{credential_key}"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X PUT \"{{baseUrl}}/connectors/oauth-config/<key>\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete OAuth credential",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/oauth-config/{credential_key}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "oauth-config",
+                "{credential_key}"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X DELETE \"{{baseUrl}}/connectors/oauth-config/<key>\""
+          },
+          "response": []
+        },
+        {
+          "name": "Sync one connector",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/{connector_type}/sync",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "{connector_type}",
+                "sync"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/connectors/<type>/sync\""
+          },
+          "response": []
+        },
+        {
+          "name": "Check duplicates",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/{connector_type}/check-duplicates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "{connector_type}",
+                "check-duplicates"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/connectors/<type>/check-duplicates\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Sync preview",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/{connector_type}/sync-preview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "{connector_type}",
+                "sync-preview"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/connectors/<type>/sync-preview\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Sync all connectors",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/sync-all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "sync-all"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/connectors/sync-all\""
+          },
+          "response": []
+        },
+        {
+          "name": "Sync-all preview",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/sync-all-preview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "sync-all-preview"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/connectors/sync-all-preview\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Connector status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/{connector_type}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "{connector_type}",
+                "status"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/connectors/<type>/status\""
+          },
+          "response": []
+        },
+        {
+          "name": "Connector token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/{connector_type}/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "{connector_type}",
+                "token"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/connectors/<type>/token\""
+          },
+          "response": []
+        },
+        {
+          "name": "Disconnect a connector",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/{connector_type}/disconnect",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "{connector_type}",
+                "disconnect"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X DELETE \"{{baseUrl}}/connectors/<type>/disconnect\""
+          },
+          "response": []
+        },
+        {
+          "name": "Connector webhook (POST)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/{connector_type}/webhook",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "{connector_type}",
+                "webhook"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X POST \"{{baseUrl}}/connectors/<type>/webhook\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}'",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Connector webhook (GET)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/{connector_type}/webhook",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "{connector_type}",
+                "webhook"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/connectors/<type>/webhook\""
+          },
+          "response": []
+        },
+        {
+          "name": "Browse a connection",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/connectors/{connector_type}/{connection_id}/browse",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connectors",
+                "{connector_type}",
+                "{connection_id}",
+                "browse"
+              ]
+            },
+            "description": "Equivalent curl:\n\ncurl -X GET \"{{baseUrl}}/connectors/<type>/<connection_id>/browse\""
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
