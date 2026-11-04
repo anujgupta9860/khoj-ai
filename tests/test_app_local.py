@@ -478,7 +478,8 @@ assert r.status_code == 200
 
 # non-super users cannot touch the admin surface
 CURRENT["user"] = {"uid": "member-9", "email": "m@x.com"}
-for path in ("/api/admin/org-requests", "/api/admin/logs", "/api/admin/metrics"):
+for path in ("/api/admin/org-requests", "/api/admin/logs", "/api/admin/metrics",
+             "/api/admin/conversations", "/api/admin/uploads", "/api/admin/file-stats"):
     assert client.get(path, headers=H).status_code == 403, path
 r = client.post(f"/api/admin/orgs/{org2['id']}/decision", json={"decision": "approve"}, headers=H)
 assert r.status_code == 403
@@ -521,6 +522,30 @@ assert m["orgs"]["approved"] >= 2 and m["orgs"]["rejected"] == 1, m["orgs"]
 assert m["searches"]["total"] >= 3 and m["searches"]["uniqueUsers"] >= 1
 assert m["searches"]["zeroResultRate"] < 1.0  # in-scope searches above returned results
 CURRENT["user"] = USER
+
+# super-admin conversations: questions WITH their answers, org names resolved
+r = client.get("/api/admin/conversations?limit=50", headers=H)
+convs = r.json()["conversations"]
+hit = [c for c in convs if c["question"] == "beta pricing"]
+assert hit and hit[0]["orgName"] == org2["name"], convs[:3]
+assert all("answer" in c for c in convs)
+
+# super-admin uploads: grouped global / per-org / personal
+r = client.get("/api/admin/uploads", headers=H)
+up = r.json()
+assert any(f["filename"] == "global.md" for f in up["global"]), up["global"]
+assert any(g["orgId"] == ORG_ID and any(f["filename"] == "biz.md" for f in g["files"])
+           for g in up["orgs"]), up["orgs"]
+assert any(f["filename"] == "mine.md" for g in up["personal"] for f in g["files"]), up["personal"]
+assert all(set(f) >= {"filename", "uploadedAt", "status"} for g in up["orgs"] for f in g["files"])
+
+# super-admin file matrix: chunks + ingestion time per file
+r = client.get("/api/admin/file-stats", headers=H)
+fs = r.json()
+gf = [f for f in fs["global"] if f["filename"] == "global.md"]
+assert gf and "chunks" in gf[0] and "ingestionSec" in gf[0] and gf[0]["status"] == "ready", fs["global"]
+assert any(g["orgId"] == ORG_ID and any(f["filename"] == "biz.md" for f in g["files"])
+           for g in fs["orgs"]), fs["orgs"]
 
 # --- chat: the web service as an A2A client of the agent --------------------
 os.environ["KHOJ_AGENT_URL"] = "http://khoj-agent"

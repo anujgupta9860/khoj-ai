@@ -152,6 +152,10 @@ class FirestoreOrgService:
         )
         return [s.to_dict() for s in snaps]
 
+    def list_all_uploads(self, limit: int = 1000) -> list:
+        snaps = self.db.collection("file_uploads").limit(limit).get()
+        return [s.to_dict() for s in snaps]
+
     # -- invites -----------------------------------------------------------
     def create_invite(self, org_id: str, email: str, role: str, invited_by: str, secret_hash: str) -> dict:
         ref = self._org(org_id).collection("invites").document()
@@ -299,6 +303,9 @@ class InMemoryOrgService:
 
     def list_uploads(self, scope_key: str) -> list:
         return [dict(r) for r in self.uploads.values() if r.get("scopeKey") == scope_key]
+
+    def list_all_uploads(self, limit: int = 1000) -> list:
+        return [dict(r) for r in self.uploads.values()][:limit]
 
     def create_invite(self, org_id: str, email: str, role: str, invited_by: str, secret_hash: str) -> dict:
         invite_id = self._new_id("inv")

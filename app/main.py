@@ -461,6 +461,7 @@ def chat(body: ChatBody, authorization: str | None = Header(default=None)):
         orgId=body.orgId,
         query=body.message,
         summary=text[:500],
+        answer=text,
         results=len(sources),
         latencyMs=int((time.monotonic() - started) * 1000),
         source="chat",
@@ -803,6 +804,14 @@ class DecisionBody(BaseModel):
     decision: str  # "approve" | "reject"
 
 
+def _org_name_map(svc) -> dict:
+    names = {PLATFORM_ORG_ID: "Khoj (global corpus)"}
+    for status in ("approved", "pending", "rejected"):
+        for o in svc.list_orgs_by_status(status):
+            names[o["id"]] = o.get("name", o["id"])
+    return names
+
+
 @app.get("/api/admin/org-requests")
 def org_requests(authorization: str | None = Header(default=None)):
     user = require_user(authorization)
@@ -828,6 +837,152 @@ def admin_logs(limit: int = 100, authorization: str | None = Header(default=None
     user = require_user(authorization)
     require_super_admin(user)
     return {"logs": org_service().list_events(limit=min(limit, 500))}
+
+
+@app.get("/api/admin/conversations")
+def admin_conversations(limit: int = 100, authorization: str | None = Header(default=None)):
+    """Every user's questions with the answers they got (chat + search),
+    newest first — the super admin's inspection view."""
+    user = require_user(authorization)
+    require_super_admin(user)
+    svc = org_service()
+    names = _org_name_map(svc)
+    out = []
+    for e in svc.list_events(limit=500):
+        if e.get("kind") not in ("chat", "search"):
+            continue
+        out.append({
+            "ts": e.get("ts"),
+            "email": e.get("email", ""),
+            "kind": e.get("kind"),
+            "orgId": e.get("orgId"),
+            "orgName": names.get(e.get("orgId") or "", "Personal") if e.get("orgId") else "Personal",
+            "question": e.get("query", ""),
+            "answer": e.get("answer") or e.get("summary") or "",
+            "results": e.get("results"),
+            "latencyMs": e.get("latencyMs"),
+        })
+        if len(out) >= min(limit, 200):
+            break
+    return {"conversations": out}
+
+
+@app.get("/api/admin/uploads")
+def admin_uploads(authorization: str | None = Header(default=None)):
+    """All uploaded files, grouped: the global corpus (platform org),
+    then per business, then personal uploads by user."""
+    user = require_user(authorization)
+    require_super_admin(user)
+    svc = org_service()
+    names = _org_name_map(svc)
+    try:
+        indexed = _openrag_files()
+    except Exception:
+        indexed = {}
+    groups_global, groups_orgs, groups_personal = [], {}, {}
+    for rec in svc.list_all_uploads():
+        entry = {
+            "filename": rec.get("filename", ""),
+            "uploadedAt": rec.get("uploadedAt"),
+            "uid": rec.get("uid", ""),
+            "status": "ready" if openrag_filename(rec.get("docId", ""), rec.get("filename", "")) in indexed else "indexing",
+        }
+        org_id = rec.get("orgId")
+        if org_id == PLATFORM_ORG_ID:
+            groups_global.append(entry)
+        elif org_id:
+            groups_orgs.setdefault(org_id, []).append(entry)
+        else:
+            groups_personal.setdefault(rec.get("uid", ""), []).append(entry)
+    newest = lambda files: sorted(files, key=lambda f: -(f.get("uploadedAt") or 0))
+    return {
+        "global": newest(groups_global),
+        "orgs": [
+            {"orgId": oid, "orgName": names.get(oid, oid), "files": newest(files)}
+            for oid, files in sorted(groups_orgs.items(), key=lambda kv: names.get(kv[0], kv[0]))
+        ],
+        "personal": [
+            {"uid": uid, "files": newest(files)}
+            for uid, files in sorted(groups_personal.items())
+        ],
+    }
+
+
+def _parse_ts(value):
+    """Best-effort epoch-seconds from a number, numeric string, or ISO
+    timestamp; None when unparseable."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return value / 1000.0 if value > 1e12 else float(value)
+    s = str(value).strip()
+    try:
+        f = float(s)
+        return f / 1000.0 if f > 1e12 else f
+    except ValueError:
+        pass
+    try:
+        import datetime as _dt
+        d = _dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=_dt.timezone.utc)
+        return d.timestamp()
+    except Exception:
+        return None
+
+
+@app.get("/api/admin/file-stats")
+def admin_file_stats(authorization: str | None = Header(default=None)):
+    """The ingestion matrix: per file — corpus, chunk count, and how long
+    ingestion took (upload time -> indexed time), grouped global / org /
+    personal like /api/admin/uploads."""
+    user = require_user(authorization)
+    require_super_admin(user)
+    svc = org_service()
+    names = _org_name_map(svc)
+    try:
+        indexed = _openrag_files()
+    except Exception:
+        indexed = {}
+
+    def entry(rec):
+        meta = indexed.get(openrag_filename(rec.get("docId", ""), rec.get("filename", "")), {})
+        up_ts = _parse_ts(rec.get("uploadedAt"))
+        idx_ts = _parse_ts(meta.get("indexed_time"))
+        ingest = None
+        if up_ts and idx_ts and idx_ts >= up_ts:
+            ingest = round(idx_ts - up_ts, 1)
+        return {
+            "filename": rec.get("filename", ""),
+            "uploadedAt": rec.get("uploadedAt"),
+            "uid": rec.get("uid", ""),
+            "chunks": meta.get("chunks"),
+            "ingestionSec": ingest,
+            "status": "ready" if meta else "indexing",
+        }
+
+    groups_global, groups_orgs, groups_personal = [], {}, {}
+    for rec in svc.list_all_uploads():
+        e = entry(rec)
+        org_id = rec.get("orgId")
+        if org_id == PLATFORM_ORG_ID:
+            groups_global.append(e)
+        elif org_id:
+            groups_orgs.setdefault(org_id, []).append(e)
+        else:
+            groups_personal.setdefault(rec.get("uid", ""), []).append(e)
+    newest = lambda files: sorted(files, key=lambda f: -(f.get("uploadedAt") or 0))
+    return {
+        "global": newest(groups_global),
+        "orgs": [
+            {"orgId": oid, "orgName": names.get(oid, oid), "files": newest(files)}
+            for oid, files in sorted(groups_orgs.items(), key=lambda kv: names.get(kv[0], kv[0]))
+        ],
+        "personal": [
+            {"uid": uid, "files": newest(files)}
+            for uid, files in sorted(groups_personal.items())
+        ],
+    }
 
 
 @app.get("/api/admin/metrics")

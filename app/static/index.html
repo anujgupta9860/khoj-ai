@@ -4,177 +4,293 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Khoj.ai — search the documents</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <style>
-  :root { color-scheme: light dark; --accent:#4f46e5; --accent2:#7c6cf6; --line:#8883; }
+  :root {
+    color-scheme: light;
+    --accent: #09090b;
+    --bg: #ffffff;
+    --fg: #09090b;
+    --muted: #f4f4f5;
+    --muted-fg: #71717a;
+    --border: #ececef;
+    --input: #e4e4e7;
+    --sidebar: #fafafa;
+    --radius: 10px;
+  }
   * { box-sizing: border-box; }
-  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: light-dark(#f7f7fb, #101014); }
-  header { position: sticky; top: 0; z-index: 5; display:flex; justify-content:space-between; align-items:center; padding: 13px 20px; border-bottom: 1px solid var(--line); background: light-dark(#ffffffcc, #16161ccc); backdrop-filter: blur(10px); }
-  .logo { font-size: 22px; font-weight: 800; letter-spacing: -.02em; } .logo span { background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  main { max-width: 820px; margin: 0 auto; padding: 26px 16px 96px; }
-  .card { border: 1px solid var(--line); border-radius: 16px; padding: 22px; background: light-dark(#fff, #17171d); box-shadow: 0 1px 3px #0001, 0 8px 24px -18px #0006; }
-  .card h3 { letter-spacing: -.01em; }
-  input[type=email], input[type=password], input[type=text] { width: 100%; padding: 12px 14px; margin: 6px 0 12px; border-radius: 10px; border: 1px solid #8886; font-size: 16px; background: transparent; }
-  input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
-  select { background: transparent; }
-  button { background: linear-gradient(180deg, var(--accent2), var(--accent)); color: #fff; border: 0; border-radius: 10px; padding: 11px 18px; font-size: 15px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px -2px #4f46e588; }
+  html, body { height: 100%; }
+  body { font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: var(--bg); color: var(--fg); font-size: 15px; -webkit-font-smoothing: antialiased; }
+  .hidden { display: none !important; }
+  .muted { color: var(--muted-fg); font-size: 14px; }
+  .err { color: #dc2626; min-height: 20px; font-size: 14px; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  a { color: var(--fg); }
+
+  /* ---------- App shell: sidebar + content (OpenRAG layout) ---------- */
+  #searchview { display: flex; min-height: 100dvh; }
+  aside#sidebar { width: 264px; flex: 0 0 264px; background: var(--sidebar); border-right: 1px solid var(--border); padding: 18px 14px; display: flex; flex-direction: column; gap: 4px; position: sticky; top: 0; height: 100dvh; }
+  .logo { font-size: 21px; font-weight: 800; letter-spacing: -.02em; padding: 2px 8px 14px; }
+  .logo span { color: var(--muted-fg); font-weight: 600; }
+  .sidelabel { font-size: 12px; font-weight: 600; color: var(--muted-fg); text-transform: uppercase; letter-spacing: .06em; padding: 10px 8px 6px; }
+  #corpus { width: 100%; padding: 9px 10px; border: 1px solid var(--input); border-radius: 8px; background: #fff; font-size: 14px; margin-bottom: 8px; }
+  .navbtn { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-left: 3px solid transparent; border-radius: 8px; background: transparent; color: #3f3f46; font-size: 14.5px; font-weight: 500; cursor: pointer; box-shadow: none; text-align: left; }
+  .navbtn:hover { background: #f0f0f2; transform: none; }
+  .navbtn.active { background: var(--muted); color: var(--fg); border-left-color: var(--fg); }
+  .navbtn .ic { width: 17px; text-align: center; opacity: .75; }
+  #sidebar .spacer { flex: 1; }
+  #userbox { border-top: 1px solid var(--border); padding-top: 12px; flex-direction: column; align-items: stretch; gap: 8px; }
+  #useremail { font-size: 13px; color: var(--muted-fg); padding: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  main { flex: 1; min-width: 0; padding: 34px 40px 90px; }
+  .view { max-width: 880px; margin: 0 auto; }
+  .view h2 { font-size: 24px; font-weight: 700; letter-spacing: -.02em; margin: 0 0 6px; }
+  .view .sub { color: var(--muted-fg); margin: 0 0 22px; font-size: 14.5px; }
+
+  /* ---------- Cards, forms, buttons ---------- */
+  .card { border: 1px solid var(--border); border-radius: 14px; padding: 22px; background: #fff; box-shadow: 0 1px 2px rgba(16,16,20,.04); }
+  .card h3 { margin: 0 0 8px; font-size: 16.5px; font-weight: 600; letter-spacing: -.01em; }
+  input[type=email], input[type=password], input[type=text] { width: 100%; padding: 10px 12px; margin: 6px 0 12px; border-radius: 8px; border: 1px solid var(--input); font-size: 15px; background: #fff; color: var(--fg); font-family: inherit; }
+  input:focus, select:focus { outline: none; border-color: var(--fg); box-shadow: 0 0 0 3px rgba(9,9,11,.08); }
+  select { background: #fff; color: var(--fg); font-family: inherit; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 10px 16px; font-size: 14.5px; font-weight: 600; cursor: pointer; font-family: inherit; transition: background .12s ease, transform .05s ease; }
+  button:hover { filter: brightness(1.25); }
   button:active { transform: translateY(1px); }
   button:disabled { opacity: .55; cursor: default; }
-  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); box-shadow: none; }
-  .row { display:flex; gap: 10px; align-items:center; }
-  .muted { opacity: .68; font-size: 14px; }
-  .result { padding: 16px 2px; border-bottom: 1px solid #8882; }
-  .result h3 { margin: 0 0 5px; font-size: 17px; }
-  .result h3 a { color: var(--accent); text-decoration: none; }
-  .summary { background: #4f46e514; border: 1px solid #4f46e533; border-radius: 12px; padding: 16px; margin: 18px 0; white-space: pre-wrap; }
-  .err { color: #dc2626; min-height: 20px; font-size: 14px; }
-  .hidden { display: none !important; }
-  #searchbar { display:flex; gap: 10px; } #searchbar input { margin: 0; padding: 14px 16px; border-radius: 12px; font-size: 17px; }
-  /* Floating chat widget */
-  #chatfab { position: fixed; right: 20px; bottom: 20px; z-index: 40; width: 58px; height: 58px; border-radius: 50%; font-size: 25px; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 26px -6px #4f46e5aa; }
-  #chatpanel { position: fixed; top: 0; right: 0; z-index: 41; width: min(392px, 100vw); height: 100dvh; display: flex; flex-direction: column; background: light-dark(#fff, #17171d); border-left: 1px solid var(--line); box-shadow: -18px 0 44px -20px #0007; transform: translateX(105%); transition: transform .26s ease, visibility .26s; visibility: hidden; pointer-events: none; }
+  button.secondary { background: #fff; color: var(--fg); border: 1px solid var(--input); box-shadow: none; }
+  button.secondary:hover { background: var(--muted); filter: none; }
+
+  /* ---------- Search ---------- */
+  .searchbox { display: flex; gap: 8px; align-items: center; border: 1px solid var(--input); border-radius: 14px; padding: 6px 6px 6px 16px; background: #fff; box-shadow: 0 1px 3px rgba(16,16,20,.05); }
+  .searchbox:focus-within { border-color: var(--fg); box-shadow: 0 0 0 3px rgba(9,9,11,.07); }
+  .searchbox input { border: 0; margin: 0; padding: 10px 0; font-size: 16.5px; box-shadow: none; }
+  .searchbox input:focus { border: 0; box-shadow: none; }
+  .searchbox button { border-radius: 10px; padding: 10px 20px; }
+  .summary { background: var(--muted); border-radius: 12px; padding: 16px 18px; margin: 20px 0 4px; white-space: pre-wrap; font-size: 15px; line-height: 1.55; }
+  .result { padding: 18px 2px; border-bottom: 1px solid var(--border); }
+  .result h3 { margin: 0 0 6px; font-size: 16.5px; font-weight: 600; }
+  .result h3 a { color: var(--fg); text-decoration: none; }
+  .result h3 a:hover { text-decoration: underline; }
+  .result div { line-height: 1.55; margin: 3px 0; }
+
+  /* ---------- Chips, tables, tiles ---------- */
+  .chip { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; vertical-align: 1px; }
+  .chip.ok { background: #d1fae5; color: #047857; }
+  .chip.wait { background: #fef3c7; color: #b45309; }
+  .chip.bad { background: #fee2e2; color: #b91c1c; }
+  table.matrix { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.matrix th { text-align: left; color: var(--muted-fg); font-weight: 500; font-size: 12.5px; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  table.matrix td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .grouph { font-weight: 600; font-size: 15px; margin: 20px 0 4px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 8px; }
+  .tile { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; background: #fff; }
+  .tile .n { font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
+  .tile .l { color: var(--muted-fg); font-size: 12.5px; margin-top: 2px; }
+  .qa { padding: 16px 0; border-bottom: 1px solid var(--border); }
+  .qa .q { font-weight: 600; font-size: 15.5px; }
+  .qa .meta { color: var(--muted-fg); font-size: 13px; margin: 4px 0 8px; }
+  .qa .a { background: var(--muted); border-radius: 10px; padding: 12px 14px; white-space: pre-wrap; line-height: 1.55; font-size: 14.5px; }
+  pre.code { overflow: auto; background: var(--muted); padding: 14px; border-radius: 10px; font-size: 13px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  .docrow { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--border); color: var(--fg); }
+  /* ---------- Auth ---------- */
+  #authview { max-width: 400px; margin: 9vh auto 0; }
+  #authview .logo { text-align: center; padding-bottom: 6px; }
+
+  /* ---------- Chat (slide-over, OpenRAG chat styling) ---------- */
+  #chatfab { position: fixed; right: 22px; bottom: 22px; z-index: 40; width: 54px; height: 54px; border-radius: 50%; background: var(--fg); color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 26px -8px rgba(9,9,11,.45); padding: 0; }
+  #chatfab svg { width: 24px; height: 24px; }
+  #chatpanel { position: fixed; top: 0; right: 0; z-index: 41; width: min(420px, 100vw); height: 100dvh; display: flex; flex-direction: column; background: #fff; border-left: 1px solid var(--border); box-shadow: -18px 0 44px -22px rgba(9,9,11,.25); transform: translateX(105%); transition: transform .26s ease, visibility .26s; visibility: hidden; pointer-events: none; }
   #chatpanel.open { transform: translateX(0); visibility: visible; pointer-events: auto; }
   #docfile { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
-  #chathead { display:flex; align-items:flex-start; justify-content:space-between; gap: 10px; padding: 16px 18px 12px; border-bottom: 1px solid var(--line); }
-  #chathead .t { font-size: 17px; font-weight: 700; }
-  #chatclose { background: transparent; color: inherit; border: 0; box-shadow: none; font-size: 19px; padding: 2px 8px; }
-  #chatlog { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
-  .msg { max-width: 86%; padding: 10px 13px; border-radius: 15px; font-size: 15px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .msg.you { align-self: flex-end; background: linear-gradient(180deg, var(--accent2), var(--accent)); color: #fff; border-bottom-right-radius: 5px; }
-  .msg.bot { align-self: flex-start; background: light-dark(#eef0f6, #23232c); border-bottom-left-radius: 5px; }
-  .msg.thinking { opacity: .6; font-style: italic; }
-  #chatfoot { border-top: 1px solid var(--line); padding: 12px; }
-  #chatfoot .row { align-items: stretch; }
-  #chatinput { margin: 0 !important; flex: 1; }
+  #chathead { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 16px 18px 12px; border-bottom: 1px solid var(--border); }
+  #chathead .t { font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
+  #chatclose { background: transparent; color: var(--muted-fg); border: 0; box-shadow: none; font-size: 17px; padding: 2px 8px; }
+  #chatclose:hover { background: var(--muted); filter: none; }
+  #chatlog { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 88%; padding: 10px 14px; border-radius: 16px; font-size: 14.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.you { align-self: flex-end; background: var(--muted); color: var(--fg); border-bottom-right-radius: 6px; }
+  .msg.bot { align-self: flex-start; background: #fff; border: 1px solid var(--border); border-bottom-left-radius: 6px; }
+  .msg.thinking { opacity: .55; font-style: italic; }
+  #chatfoot { border-top: 1px solid var(--border); padding: 12px 14px; }
+  #chatfoot .row { align-items: center; border: 1px solid var(--input); border-radius: 14px; padding: 4px 4px 4px 12px; background: #fff; }
+  #chatfoot .row:focus-within { border-color: var(--fg); box-shadow: 0 0 0 3px rgba(9,9,11,.07); }
+  #chatinput { margin: 0 !important; flex: 1; border: 0; padding: 8px 0; }
+  #chatinput:focus { border: 0; box-shadow: none; }
+  #chatsend { border-radius: 10px; padding: 8px 14px; }
+
+  @media (max-width: 860px) {
+    #searchview { flex-direction: column; }
+    aside#sidebar { width: auto; flex: none; height: auto; position: static; flex-direction: row; flex-wrap: wrap; align-items: center; }
+    #sidebar .spacer { display: none; }
+    #userbox { border-top: 0; flex-direction: row; align-items: center; margin-left: auto; }
+    main { padding: 22px 16px 80px; }
+  }
 </style>
 </head>
 <body>
-<header>
+<!-- Auth -->
+<section id="authview" class="card hidden">
   <div class="logo">Khoj<span>.ai</span></div>
-  <div id="userbox" class="row hidden">
-    <span id="useremail" class="muted"></span>
-    <button id="signout" class="secondary">Sign out</button>
+  <div id="orgbrand" class="hidden" style="margin-bottom:10px; text-align:center">
+    <img id="orglogo" alt="" style="max-height:44px; display:none; margin:0 auto" />
+    <div id="orgtagline" class="muted"></div>
   </div>
-</header>
-<main>
-  <!-- Auth -->
-  <section id="authview" class="card hidden">
-    <div id="orgbrand" class="hidden" style="margin-bottom:10px">
-      <img id="orglogo" alt="" style="max-height:44px; display:none" />
-      <div id="orgtagline" class="muted"></div>
-    </div>
-    <h2 id="authtitle">Sign in</h2>
-    <p class="muted">For you: sign up directly and search your own documents. For your business: create an account, then enroll your org and invite your team.</p>
-    <input id="email" type="email" placeholder="Email" autocomplete="email" />
-    <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
-    <div class="err" id="autherr"></div>
-    <div class="row">
-      <button id="authsubmit">Sign in</button>
-      <button id="authtoggle" class="secondary">New here? Create account</button>
-    </div>
-  </section>
+  <h2 id="authtitle" style="margin:6px 0 4px; font-size:20px">Sign in</h2>
+  <p class="muted" style="margin-top:0">For you: sign up directly and search your own documents. For your business: create an account, then enroll your org and invite your team.</p>
+  <input id="email" type="email" placeholder="Email" autocomplete="email" />
+  <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
+  <div class="err" id="autherr"></div>
+  <div class="row">
+    <button id="authsubmit">Sign in</button>
+    <button id="authtoggle" class="secondary">New here? Create account</button>
+  </div>
+</section>
 
-  <!-- Search -->
-  <section id="searchview" class="hidden">
-    <div id="invitesbox" class="card hidden" style="margin-bottom:16px; border-color: var(--accent)">
-      <h3 style="margin-top:0">You're invited</h3>
-      <div id="inviteslist"></div>
+<!-- App shell -->
+<div id="searchview" class="hidden">
+  <aside id="sidebar">
+    <div class="logo">Khoj<span>.ai</span></div>
+    <div class="sidelabel">Knowledge source</div>
+    <select id="corpus">
+      <option value="">My documents</option>
+    </select>
+    <div class="sidelabel">Workspace</div>
+    <button class="navbtn active" data-view="search"><span class="ic">⌕</span>Search</button>
+    <button class="navbtn" id="navchat"><span class="ic">💬</span>Chat</button>
+    <button class="navbtn" data-view="documents"><span class="ic">🗂</span>Documents</button>
+    <button class="navbtn" data-view="businesses"><span class="ic">🏢</span>Businesses</button>
+    <button class="navbtn" data-view="developers"><span class="ic">⚡</span>Developers</button>
+    <button class="navbtn hidden" id="navadmin" data-view="admin"><span class="ic">🛡</span>Super Admin</button>
+    <div class="spacer"></div>
+    <div id="userbox" class="hidden">
+      <span id="useremail"></span>
+      <button id="signout" class="secondary">Sign out</button>
     </div>
-    <div class="row" style="margin-bottom:12px">
-      <label class="muted" for="corpus">Searching:</label>
-      <select id="corpus" style="padding:10px; border-radius:8px; font-size:15px">
-        <option value="">My documents</option>
-      </select>
-    </div>
-    <div id="searchbar">
-      <input id="q" type="text" placeholder="Search the documents…" />
-      <button id="go">Khoj</button>
-    </div>
-    <div class="err" id="searcherr"></div>
-    <div id="summary" class="summary hidden"></div>
-    <div id="results"></div>
-
-    <!-- Your documents -->
-    <div id="uploadbox" class="card" style="margin-top:28px">
-      <h3>Your documents</h3>
-      <p class="muted">Uploads go to the corpus selected above. Personal uploads are private to you; business uploads are shared with that business's members (owners and admins upload).</p>
-      <div class="row">
-        <button id="pickfile" class="secondary" type="button">Choose file</button>
-        <span id="pickedname" class="muted">No file chosen</span>
-        <input id="docfile" type="file" />
-        <button id="upload">Upload</button>
+  </aside>
+  <main>
+    <!-- Search -->
+    <section class="view" id="view-search">
+      <div id="invitesbox" class="card hidden" style="margin-bottom:16px">
+        <h3>You're invited</h3>
+        <div id="inviteslist"></div>
       </div>
-      <div id="uploadstatus" class="muted"></div>
-      <div id="doclist" class="muted" style="margin-top:10px"></div>
-    </div>
+      <h2>Search</h2>
+      <p class="sub">Ask the documents — answers come only from the corpus selected on the left.</p>
+      <div class="searchbox">
+        <input id="q" type="text" placeholder="Search the documents…" />
+        <button id="go">Khoj</button>
+      </div>
+      <div class="err" id="searcherr"></div>
+      <div id="summary" class="summary hidden"></div>
+      <div id="results"></div>
+    </section>
 
-    <!-- Super admin (platform org admins only) -->
-    <div id="superbox" class="card hidden" style="margin-top:20px; border-color: var(--accent)">
-      <h3 style="margin-top:0">Super Admin — Khoj platform</h3>
-      <div id="supermetrics" class="muted"></div>
-      <h4 style="margin-bottom:6px">Business signup requests</h4>
-      <div id="orgrequests" class="muted"></div>
-      <h4 style="margin-bottom:6px">Recent conversations</h4>
-      <div id="convlogs" style="font-size:14px"></div>
-      <button id="refreshadmin" class="secondary" style="margin-top:10px">Refresh</button>
-    </div>
+    <!-- Documents -->
+    <section class="view hidden" id="view-documents">
+      <h2>Documents</h2>
+      <p class="sub">Uploads go to the corpus selected on the left. Personal uploads are private to you; business uploads are shared with that business's members (owners and admins upload).</p>
+      <div id="uploadbox" class="card">
+        <h3>Upload a document</h3>
+        <div class="row">
+          <button id="pickfile" class="secondary" type="button">Choose file</button>
+          <span id="pickedname" class="muted">No file chosen</span>
+          <input id="docfile" type="file" />
+          <button id="upload">Upload</button>
+        </div>
+        <div id="uploadstatus" class="muted" style="margin-top:8px"></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h3>Your documents</h3>
+        <div id="doclist" class="muted" style="margin-top:6px"></div>
+      </div>
+    </section>
 
     <!-- Businesses -->
-    <div id="bizbox" class="card" style="margin-top:20px">
-      <h3>Businesses</h3>
-      <p class="muted">A business has its own shared corpus: owners and admins upload documents, every member can search them.</p>
-      <div class="row">
-        <input id="bizname" type="text" placeholder="New business name" style="margin:0" />
-        <button id="createbiz">Create</button>
+    <section class="view hidden" id="view-businesses">
+      <h2>Businesses</h2>
+      <p class="sub">A business has its own shared corpus: owners and admins upload documents, every member can search them.</p>
+      <div id="bizbox" class="card">
+        <div class="row">
+          <input id="bizname" type="text" placeholder="New business name" style="margin:0" />
+          <button id="createbiz">Create</button>
+        </div>
+        <div id="bizlist" class="muted" style="margin-top:12px"></div>
+        <div id="memberbox" class="hidden" style="margin-top:16px; border-top:1px solid var(--border); padding-top:14px">
+          <div class="muted" id="membertitle"></div>
+          <div id="memberlist" class="muted" style="margin:6px 0"></div>
+          <div class="row">
+            <input id="memberemail" type="email" placeholder="Existing member's account email" style="margin:0" />
+            <select id="memberrole" style="padding:10px; border-radius:8px; border:1px solid var(--input)">
+              <option value="member">member</option>
+              <option value="admin">admin</option>
+            </select>
+            <button id="addmember" class="secondary">Add member</button>
+          </div>
+          <div id="memberstatus" class="muted"></div>
+
+          <h4 style="margin:18px 0 6px">Invite employees</h4>
+          <div class="row">
+            <input id="inviteemail" type="email" placeholder="Employee email" style="margin:0" />
+            <select id="inviterole" style="padding:10px; border-radius:8px; border:1px solid var(--input)">
+              <option value="member">member</option>
+              <option value="admin">admin</option>
+            </select>
+            <button id="sendinvite" class="secondary">Create invite</button>
+          </div>
+          <div id="invitestatus" class="muted"></div>
+          <div id="pendinginvites" class="muted" style="margin-top:6px"></div>
+
+          <h4 style="margin:18px 0 6px">Branding</h4>
+          <input id="bname" type="text" placeholder="Display name (e.g. Acme Docs)" />
+          <input id="blogo" type="text" placeholder="Logo URL (https://…)" />
+          <input id="btag" type="text" placeholder="Tagline" />
+          <div class="row">
+            <label class="muted">Primary color <input id="bcolor" type="color" value="#4f46e5" /></label>
+            <button id="savebranding" class="secondary">Save branding</button>
+          </div>
+          <div id="brandstatus" class="muted"></div>
+          <div id="brandlink" class="muted" style="margin-top:6px"></div>
+        </div>
       </div>
-      <div id="bizlist" class="muted" style="margin-top:10px"></div>
-      <div id="memberbox" class="hidden" style="margin-top:14px">
-        <div class="muted" id="membertitle"></div>
-        <div id="memberlist" class="muted" style="margin:6px 0"></div>
-        <div class="row">
-          <input id="memberemail" type="email" placeholder="Existing member's account email" style="margin:0" />
-          <select id="memberrole" style="padding:10px; border-radius:8px">
-            <option value="member">member</option>
-            <option value="admin">admin</option>
-          </select>
-          <button id="addmember" class="secondary">Add member</button>
-        </div>
-        <div id="memberstatus" class="muted"></div>
+    </section>
 
-        <h4 style="margin:18px 0 6px">Invite employees</h4>
-        <div class="row">
-          <input id="inviteemail" type="email" placeholder="Employee email" style="margin:0" />
-          <select id="inviterole" style="padding:10px; border-radius:8px">
-            <option value="member">member</option>
-            <option value="admin">admin</option>
-          </select>
-          <button id="sendinvite" class="secondary">Create invite</button>
-        </div>
-        <div id="invitestatus" class="muted"></div>
-        <div id="pendinginvites" class="muted" style="margin-top:6px"></div>
-
-        <h4 style="margin:18px 0 6px">Branding</h4>
-        <input id="bname" type="text" placeholder="Display name (e.g. Acme Docs)" />
-        <input id="blogo" type="text" placeholder="Logo URL (https://…)" />
-        <input id="btag" type="text" placeholder="Tagline" />
-        <div class="row">
-          <label class="muted">Primary color <input id="bcolor" type="color" value="#4f46e5" /></label>
-          <button id="savebranding" class="secondary">Save branding</button>
-        </div>
-        <div id="brandstatus" class="muted"></div>
-        <div id="brandlink" class="muted" style="margin-top:6px"></div>
+    <!-- Developers / MCP -->
+    <section class="view hidden" id="view-developers">
+      <h2>Developers</h2>
+      <p class="sub">Use Khoj inside your own agent over MCP.</p>
+      <div id="mcpbox" class="card">
+        <h3>Khoj as an MCP server</h3>
+        <p class="muted">Add Khoj as an MCP server in Claude, Cursor, or any MCP client and your agent can search your documents. Paste this config:</p>
+        <pre id="mcpconfig" class="code"></pre>
+        <button id="copymcp" class="secondary">Copy my MCP config</button>
+        <p class="muted">The token is your sign-in token and lasts about an hour — come back here for a fresh config when it expires.</p>
       </div>
-    </div>
+    </section>
 
-    <!-- MCP: use Khoj inside your own agent -->
-    <div id="mcpbox" class="card" style="margin-top:20px">
-      <h3>Use Khoj in your agent (MCP)</h3>
-      <p class="muted">Add Khoj as an MCP server in Claude, Cursor, or any MCP client and your agent can search your documents. Paste this config:</p>
-      <pre id="mcpconfig" style="overflow:auto; background:#8881; padding:12px; border-radius:8px; font-size:13px"></pre>
-      <button id="copymcp" class="secondary">Copy my MCP config</button>
-      <p class="muted">The token is your sign-in token and lasts about an hour — come back here for a fresh config when it expires.</p>
-    </div>
-  </section>
-</main>
+    <!-- Super admin -->
+    <section class="view hidden" id="view-admin">
+      <div id="superbox" class="hidden">
+        <h2>Super Admin</h2>
+        <p class="sub">The whole platform: every business, every question and answer, every file.</p>
+        <div id="supermetrics"></div>
+        <div class="card" style="margin-top:16px">
+          <h3>Business signup requests</h3>
+          <div id="orgrequests" class="muted"></div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <h3>Questions &amp; answers — all users</h3>
+          <div id="adminconvs"></div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <h3>Files — ingestion time &amp; chunks</h3>
+          <div id="adminfiles"></div>
+        </div>
+        <button id="refreshadmin" class="secondary" style="margin-top:14px">Refresh</button>
+      </div>
+    </section>
+  </main>
+</div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
@@ -202,7 +318,7 @@ const auth = getAuth(initializeApp(cfg));
       if (b.logoUrl) { $("orglogo").src = b.logoUrl; $("orglogo").style.display = "block"; }
       $("orgtagline").textContent = b.tagline || ("Sign in to " + (b.displayName || org.name));
       $("orgbrand").classList.remove("hidden");
-      document.querySelector(".logo").innerHTML = b.displayName || org.name;
+      document.querySelector("#sidebar .logo").innerHTML = b.displayName || org.name;
     }
   }
 }
@@ -250,24 +366,46 @@ async function loadMe() {
   if (!resp.ok) return;
   const me = await resp.json();
   $("superbox").classList.toggle("hidden", !me.superAdmin);
+  $("navadmin").classList.toggle("hidden", !me.superAdmin);
   if (me.superAdmin) loadAdmin();
 }
 
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtMs = (ms) => ms == null ? "" : (ms >= 1000 ? (Math.round(ms / 100) / 10) + "s" : ms + "ms");
+const fmtT = (ts) => ts ? new Date(ts * 1000).toLocaleString() : "";
+
 async function loadAdmin() {
-  const [m, reqs, logs] = await Promise.all([
+  const [m, reqs, convs, stats] = await Promise.all([
     api("/api/admin/metrics").then((r) => r.json()),
     api("/api/admin/org-requests").then((r) => r.json()),
-    api("/api/admin/logs?limit=30").then((r) => r.json()),
+    api("/api/admin/conversations?limit=60").then((r) => r.json()),
+    api("/api/admin/file-stats").then((r) => r.json()),
   ]);
   const s = m.searches || {};
-  $("supermetrics").innerHTML =
-    `Businesses: ${m.orgs.approved} approved · ${m.orgs.pending} pending · ${m.orgs.rejected} rejected<br>` +
-    `Searches: ${s.total} total (${s.last7d} in 7d) · ${s.uploads} uploads · ${s.uniqueUsers} users · ` +
-    `avg latency ${s.avgLatencyMs ?? "—"} ms · zero-result rate ${s.zeroResultRate ?? "—"} · via MCP ${s.viaMcp} / web ${s.viaWeb}`;
+  const allFiles = [...(stats.global || []),
+    ...(stats.orgs || []).flatMap((g) => g.files),
+    ...(stats.personal || []).flatMap((g) => g.files)];
+  const chunks = allFiles.reduce((n, f) => n + (f.chunks || 0), 0);
+  const ing = allFiles.map((f) => f.ingestionSec).filter((v) => v != null);
+  const avgIng = ing.length ? (Math.round(ing.reduce((a, b) => a + b, 0) / ing.length * 10) / 10) + "s" : "—";
+  const chatLat = (convs.conversations || []).filter((c) => c.kind === "chat" && c.latencyMs != null);
+  const avgAns = chatLat.length ? fmtMs(Math.round(chatLat.reduce((a, c) => a + c.latencyMs, 0) / chatLat.length)) : "—";
+  const tile = (n, l) => `<div class="tile"><div class="n">${n}</div><div class="l">${l}</div></div>`;
+  $("supermetrics").innerHTML = `<div class="tiles">` +
+    tile(m.orgs.approved, "businesses approved") +
+    tile(m.orgs.pending, "pending requests") +
+    tile(s.total ?? 0, "searches (all time)") +
+    tile(allFiles.length, "files") +
+    tile(chunks, "chunks total") +
+    tile(avgIng, "avg ingestion time") +
+    tile(avgAns, "avg chat answer time") +
+    tile(s.zeroResultRate ?? "—", "zero-result rate") +
+    `</div>` +
+    `<div class="muted" style="margin-top:6px">${s.last7d ?? 0} searches in 7d · ${s.uploads ?? 0} uploads · ${s.uniqueUsers ?? 0} users · avg search latency ${s.avgLatencyMs ?? "—"} ms · via MCP ${s.viaMcp ?? 0} / web ${s.viaWeb ?? 0}</div>`;
   const pending = reqs.orgs || [];
   $("orgrequests").innerHTML = pending.length
     ? pending.map((o) =>
-        `<div class="row" style="justify-content:space-between"><span><b>${o.name}</b> (/${o.slug})</span>` +
+        `<div class="row" style="justify-content:space-between"><span><b>${esc(o.name)}</b> (/${esc(o.slug)})</span>` +
         `<span><button class="secondary" data-approve="${o.id}">Approve</button> ` +
         `<button class="secondary" data-reject="${o.id}">Reject</button></span></div>`).join("")
     : "No pending requests.";
@@ -284,13 +422,23 @@ async function loadAdmin() {
       loadOrgs();
     };
   });
-  $("convlogs").innerHTML = (logs.logs || []).map((e) =>
-    `<div style="padding:8px 0; border-bottom:1px solid #8882">` +
-    `<span class="muted">${new Date(e.ts * 1000).toLocaleString()} · ${e.email || e.uid} · ${e.orgId ? "business" : "personal"} · ${e.source}</span><br>` +
-    (e.kind === "upload"
-      ? `📄 uploaded <b>${e.query}</b>`
-      : `<b>${e.query}</b> → ${e.results} results, ${e.latencyMs} ms${e.summary ? `<br><span class="muted">${e.summary}</span>` : ""}`) +
-    `</div>`).join("") || "No activity yet.";
+  $("adminconvs").innerHTML = (convs.conversations || []).map((c) => {
+    const ans = c.answer || "";
+    const shown = ans.length > 600 ? ans.slice(0, 600) + "…" : ans;
+    return `<div class="qa"><div class="q">${esc(c.question)}</div>` +
+      `<div class="meta">${fmtT(c.ts)} · ${esc(c.email || "")} · ${esc(c.orgName || "Personal")} · ${c.kind}` +
+      `${c.latencyMs != null ? " · answered in " + fmtMs(c.latencyMs) : ""}${c.results != null ? " · " + c.results + " sources" : ""}</div>` +
+      (ans ? `<div class="a">${esc(shown)}</div>` : `<div class="a" style="color:var(--muted-fg)">No answer recorded.</div>`) +
+      `</div>`;
+  }).join("") || `<p class="muted">No conversations yet.</p>`;
+  const frow = (f) => `<tr><td>${esc(f.filename)}</td><td>${f.chunks ?? "—"}</td><td>${f.ingestionSec != null ? f.ingestionSec + "s" : "—"}</td><td>${f.uploadedAt ? fmtT(f.uploadedAt) : ""}</td><td>${f.status === "ready" ? '<span class="chip ok">ready</span>' : '<span class="chip wait">indexing</span>'}</td></tr>`;
+  const ftable = (files) => files.length
+    ? `<table class="matrix"><tr><th>File</th><th>Chunks</th><th>Ingestion</th><th>Uploaded</th><th>Status</th></tr>${files.map(frow).join("")}</table>`
+    : `<p class="muted">No files.</p>`;
+  let fh = `<div class="grouph">🌐 Global corpus — visible to every user</div>` + ftable(stats.global || []);
+  for (const g of stats.orgs || []) fh += `<div class="grouph">🏢 ${esc(g.orgName)}</div>` + ftable(g.files);
+  for (const g of stats.personal || []) fh += `<div class="grouph">👤 Personal — ${esc(g.uid)}</div>` + ftable(g.files);
+  $("adminfiles").innerHTML = fh;
 }
 $("refreshadmin").onclick = loadAdmin;
 
@@ -359,7 +507,7 @@ async function loadOrgs() {
 
 function applyBranding(org) {
   const b = (org && org.branding) || {};
-  const logo = document.querySelector(".logo");
+  const logo = document.querySelector("#sidebar .logo");
   document.documentElement.style.setProperty("--accent", b.primaryColor || "#4f46e5");
   logo.innerHTML = b.logoUrl
     ? `<img src="${b.logoUrl}" alt="" style="max-height:34px; vertical-align:middle" />`
@@ -499,11 +647,11 @@ async function loadDocs() {
   const resp = await fetch("/api/documents" + qs, { headers: { Authorization: "Bearer " + (await token()) } });
   if (!resp.ok) return;
   const docs = (await resp.json()).documents || [];
-  const chip = (d) => d.status === "ready" ? "✓ ready"
-    : d.status === "failed" ? "✗ failed" : "⏳ indexing";
+  const chip = (d) => d.status === "ready" ? `<span class="chip ok">ready</span>`
+    : d.status === "failed" ? `<span class="chip bad">failed</span>` : `<span class="chip wait">indexing</span>`;
   $("doclist").innerHTML = docs.length
     ? docs.map((d) =>
-        `<div>${d.title} <span class="muted">— ${chip(d)}${d.error ? " (" + d.error + ")" : ""}</span></div>`
+        `<div class="docrow"><span>${d.title}${d.error ? ` <span class="muted">(${d.error})</span>` : ""}</span>${chip(d)}</div>`
       ).join("")
     : "No documents yet — upload your first one above.";
   if (docs.some((d) => d.status === "indexing")) setTimeout(loadDocs, 10000);
@@ -600,10 +748,18 @@ $("upload").onclick = async () => {
     : "Upload failed: " + (await resp.text());
   if (resp.ok) setTimeout(loadDocs, 3000);
 };
+
+// --- sidebar view navigation ---
+function showView(name) {
+  document.querySelectorAll(".view").forEach((v) => v.classList.toggle("hidden", v.id !== "view-" + name));
+  document.querySelectorAll(".navbtn[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
+}
+document.querySelectorAll(".navbtn[data-view]").forEach((b) => { b.onclick = () => showView(b.dataset.view); });
+$("navchat").onclick = () => $("chatfab").click();
 </script>
 
 <!-- Floating chat widget (A2A agent) -->
-<button id="chatfab" class="hidden" title="Chat with your documents" aria-label="Open chat">💬</button>
+<button id="chatfab" class="hidden" title="Chat with your documents" aria-label="Open chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
 <aside id="chatpanel" aria-label="Chat with your documents">
   <div id="chathead">
     <div>
