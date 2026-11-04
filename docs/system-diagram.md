@@ -80,4 +80,4 @@ flowchart TB
 | Data | Firestore (app state, upload records, logs) · GCS bucket (originals) · OpenSearch `documents` index (chunks/embeddings) |
 | Pipeline | `cloudbuild.yaml`: build 3 images → push to Artifact Registry in-step → token kubeconfig → `helm upgrade khoj` + `khoj-agent`. Trigger: manual submit (GitHub trigger pending console OAuth) |
 | Proxy | Apigee evaluation org, proxy `khoj-api` rev 2 → http://34.8.195.76, trial expires Jan 1, 2027 |
-| Removed Nov 3, 2026 | **Vertex AI Search** — engine `khoj-search` + data store `khoj-corpus_1793659971762` deleted; all Discovery Engine code removed from Khoj web + agent. The earlier OpenRAG VM (`openrag-1`) was also deleted Nov 3 — GKE is the only stack. |
+| Single stack (Nov 3, 2026) | OpenRAG on GKE is the only retrieval stack; the earlier OpenRAG VM (`openrag-1`) was deleted Nov 3 — GKE is the only deployment. |

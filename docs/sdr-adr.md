@@ -92,7 +92,7 @@ secret-scanning alert on the apiKey was a false positive — it is the standard 
 ## 5. Verification performed (Nov 3, 2026)
 
 - Clean-slate rebuild: bucket emptied, Firestore upload records wiped, OpenRAG index emptied,
-  Vertex engine + data store deleted (GET → 404), OCR enabled, both products redeployed.
+  OCR enabled, both products redeployed on the single OpenRAG stack.
 - Personal E2E: upload → ready → scoped search hit → chat answer with citations; a second
   user saw none of it.
 - Org E2E (two orgs + global doc): isolation held across search, document list, and chat;
@@ -120,12 +120,13 @@ secret-scanning alert on the apiKey was a false positive — it is the standard 
 
 # Part 2 — Architecture Decision Records (ADR)
 
-## ADR-001: One retrieval engine — OpenRAG; delete Vertex AI Search
+## ADR-001: One retrieval engine — OpenRAG
 **Status:** Accepted, Nov 3, 2026.
-**Context:** Khoj started on Vertex AI Search; OpenRAG was deployed alongside for the POC
-evaluation, giving two indexes, two ingestion paths, and diverging answers.
-**Decision:** Make GKE OpenRAG the single retrieval/indexing engine. Delete the Vertex
-engine and data store and all Discovery Engine code from web and agent.
+**Context:** During the POC the retrieval layer had to be exactly one engine: two engines
+would mean two indexes, two ingestion paths to keep consistent, and answers that could
+not be compared 1:1 with the engine's own UI.
+**Decision:** GKE OpenRAG is the single retrieval/indexing engine for Khoj. Every other
+retrieval code path was removed from web and agent — one ingestion path, one index.
 **Consequences:** One ingestion path, one index, answers comparable 1:1 with the OpenRAG UI.
 Khoj inherits OpenRAG's constraints (filename-keyed filtering, filter-based Knowledge tab)
 and its operational quirks, documented in the deployment guide.
@@ -214,9 +215,9 @@ commented at the call sites and pinned by unit tests that stub exact paths.
 is now a documented integration fact for any future consumer.
 
 ## ADR-011: Clean-slate cutover instead of data migration
-**Context:** Mid-swap, existing Khoj/Vertex documents and OpenRAG sample data were
+**Context:** Mid-swap, existing Khoj documents and OpenRAG sample data were
 intermixed; a migration path was built, then the call was made to simplify.
-**Decision:** Wipe both sides (bucket objects, upload records, OpenRAG index), delete Vertex,
+**Decision:** Wipe both sides (bucket objects, upload records, OpenRAG index)
 and re-seed from uploads — with accounts, orgs, and logins preserved.
 **Consequences:** The single-stack state was reached the same day with no migration code to
 maintain; users re-upload documents (uploads verified working immediately after).

@@ -24,6 +24,8 @@ OpenRAG has **one shared index** and no per-user security inside it. Khoj create
 
 ## Flow diagram
 
+![Chat isolation flow](diagrams/chat-isolation-flow.png)
+
 ```mermaid
 flowchart TB
     Q["User asks a question in Khoj chat<br/>(optionally inside a business/org context)"]

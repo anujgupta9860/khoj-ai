@@ -4,6 +4,8 @@
 
 ## Diagram
 
+![Deployment diagram](diagrams/deployment-diagram.png)
+
 ```mermaid
 flowchart TB
     subgraph Internet["Public endpoints (HTTP load balancers)"]
