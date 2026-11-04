@@ -98,3 +98,31 @@ filenames. Optional filters narrow the search — most importantly by filename, 
 That split — a dumb, reliable `/search` underneath a smart, iterative chat loop — is the
 whole architecture. Anything that only needs retrieval (like Khoj) can live on `/search`
 alone; anything that needs answers uses the agent flow on top of it.
+
+## Where everything is stored
+
+OpenRAG has no separate metadata database for files. The inventory is *derived from the
+index itself*; everything else lives in exactly three places.
+
+| What | Where | Notes |
+|---|---|---|
+| **Chunks + vectors** | OpenSearch `documents` index (StatefulSet, persistent volume) | One index document per chunk: chunk text + embedding vector (kNN) + its metadata |
+| **Per-chunk metadata** | On each chunk document in `documents` | Filename and indexed timestamp are the load-bearing fields — scoping, filtering and freshness all read them |
+| **The list of files** | *Computed* from `documents` by `GET /files` | The backend aggregates chunks by filename → per file: chunk count + indexed time (latest chunk timestamp). Delete the chunks and the "file" disappears — there is no file row anywhere |
+| **Knowledge filters** | OpenSearch `knowledge_filters` index | A filter = name + saved query scope (`data_sources` = filenames, types, owners) |
+| **Workspace config** | Backend SQLite (`openrag.db` on the backend's persistent volume) | Provider + model choices, chunk size/overlap, OCR flag, onboarding state — the `workspace_config` table, one row per section |
+| **Flows** | Langflow's own database | Ingestion flow + agent flow; stored flows are locked against editing |
+| **Original files** | **Nowhere, in OpenRAG** | Parsed → indexed → discarded. (In the Khoj stack, Khoj keeps originals — see below) |
+
+### The Khoj side of the same picture
+
+Because OpenRAG keeps no file records of its own, Khoj keeps the system of record:
+
+| What | Where |
+|---|---|
+| **File metadata** (ownership + scope) | Firestore `file_uploads`: `{docId, scopeKey, uid, orgId, filename, openragTask, uploadedAt}` — who owns it, personal vs org vs global, when it was uploaded, and the OpenRAG ingestion task id |
+| **Original files** | GCS bucket `khoj-ai-corpus-innovation-lab` — the re-indexing source if the OpenSearch volume is ever lost |
+| **Document list in the Khoj UI** | Firestore records **joined live** with OpenRAG `GET /files` — Firestore says what exists and whose it is; OpenRAG says whether it is indexed, how many chunks, and when |
+| **Orgs, members, invites, branding** | Firestore collections (`orgs`, `members`, `invites`) |
+| **Search / chat / upload log** | Firestore `search_logs` — the source of the Super Admin Q&A view and metrics |
+| **Ingestion time (admin matrix)** | Computed, not stored: OpenRAG indexed time (from `/files`) minus Khoj's `uploadedAt` |
