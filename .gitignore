@@ -1,7 +1,6 @@
 .env
 __pycache__/
 *.pyc
-apigee/khoj-api.zip
 .env.local
 .venv-local/
 .local-run/

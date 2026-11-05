@@ -10,8 +10,6 @@ flowchart TB
         A2A["External A2A client"]
     end
 
-    APIGEE["Apigee proxy khoj-api<br/>/khoj/v1 · CORS · spike arrest 100/min<br/>(evaluation org, trial to Jan 1 2027)"]
-
     subgraph GKE["GKE Autopilot cluster khoj — us-central1 (regional), v1.36.4"]
         subgraph KhojNS["Khoj product"]
             WEB["khoj (web + API + MCP)<br/>FastAPI · Helm charts/khoj<br/>Ingress 34.8.195.76"]
@@ -35,7 +33,7 @@ flowchart TB
     OAI["OpenAI API<br/>gpt-4o-mini (chat + answers)<br/>text-embedding-3-small (embeddings)"]
     CB["Cloud Build (cloudbuild.yaml)<br/>builds khoj + khoj-agent + patched<br/>openrag-backend → Artifact Registry → helm upgrade"]
 
-    U --> APIGEE --> WEB
+    U --> WEB
     MCP -->|POST /mcp, Bearer = Firebase ID token| WEB
     A2A --> AGENT
     WEB -->|A2A message/send, caller token forwarded| AGENT
@@ -79,5 +77,4 @@ flowchart TB
 | Secrets | GSM → ESO (`external-secrets.io/v1`, ClusterSecretStore `gcpsm`) → k8s Secrets. No secrets in git/values. OpenAI key shared: GSM `openrag-openai-api-key` |
 | Data | SQLite (accounts, app state, upload records, logs) · originals on local disk or GCS bucket (KHOJ_STORAGE) · OpenSearch `documents` index (chunks/embeddings) |
 | Pipeline | `cloudbuild.yaml`: build 3 images → push to Artifact Registry in-step → token kubeconfig → `helm upgrade khoj` + `khoj-agent`. Trigger: manual submit (GitHub trigger pending console OAuth) |
-| Proxy | Apigee evaluation org, proxy `khoj-api` rev 2 → http://34.8.195.76, trial expires Jan 1, 2027 |
 | Single stack (Nov 3, 2026) | OpenRAG on GKE is the only retrieval stack; the earlier OpenRAG VM (`openrag-1`) was deleted Nov 3 — GKE is the only deployment. |

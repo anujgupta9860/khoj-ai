@@ -55,8 +55,7 @@ never another business's.
   cluster, one Helm chart per service under `charts/` — `khoj` and
   `khoj-agent` for this product, plus the OpenRAG stack it runs on.
   `cloudbuild.yaml` builds and deploys on push to `main` (manual
-  submit until the GitHub trigger is connected); the Apigee proxy
-  bundle lives in `apigee/`.
+  submit until the GitHub trigger is connected).
 
 The original uploaded files are also kept by the storage backend
 (`users/{uid}/…`, `orgs/{orgId}/…`) as the source of truth for
