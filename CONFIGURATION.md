@@ -85,6 +85,7 @@ creation: `POST /api/jira/ticket` with `{question, answer, orgId?}`.
 | `KHOJ_WEB_URL` | no | `http://khoj` | `web.url` | The web service. The agent fetches the caller's corpus (`GET /api/agent/corpus`) and document originals (`GET /api/documents/{id}/raw`) from it, forwarding the caller's token — authorization is enforced by the web service on every call |
 | `OPENAI_API_KEY` | no | unset | secret `khoj-agent-openai` ← GSM `openrag-openai-api-key` | Unset → agent answers extractively (no LLM) |
 | `OPENAI_MODEL` | no | `gpt-4o-mini` | values | Keep equal to OpenRAG's configured agent model for output parity |
+| `OPENAI_BASE_URL` | no | `https://api.openai.com/v1` | values (`openai.baseUrl`) / `.env` | Custom OpenAI-compatible endpoint. The agent uses it for chat; on the local stack, openrag-init also passes it to OpenRAG as the OpenAI provider's `api_base` (chat + embeddings). Blank = default |
 | `PORT` | no | `8080` | chart | Listen port |
 
 ## 4. Secrets inventory (Google Secret Manager → cluster)

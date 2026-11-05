@@ -75,6 +75,17 @@ Fully local models (no OpenAI): set `LLM_PROVIDER=ollama`,
 `OLLAMA_ENDPOINT=http://host.docker.internal:11434` with Ollama
 running on the host.
 
+Custom OpenAI-compatible endpoint (a proxy, gateway, or another
+provider): set `OPENAI_BASE_URL` in `.env` — blank keeps the default
+`https://api.openai.com/v1`. The Khoj agent uses it for its chat
+calls, and openrag-init passes it to OpenRAG as the OpenAI provider's
+`api_base`, so it covers OpenRAG's chat and embeddings too. On an
+already-onboarded stack, re-apply it with
+`docker compose run --rm openrag-init`. (The no-Docker script asks for
+the same value; on GKE the agent takes it from the chart's
+`openai.baseUrl` value, and OpenRAG's is set through its provider
+settings.)
+
 Khoj-only mode (OpenRAG hosted elsewhere, e.g. GKE): set `OPENRAG_URL`
 in `.env` and start just the product services:
 `docker compose up --no-deps khoj khoj-agent`.

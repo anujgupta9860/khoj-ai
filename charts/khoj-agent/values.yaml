@@ -29,6 +29,8 @@ openai:
   # k8s Secret named here -- never in values/git. When the secret is
   # absent the agent answers extractively from the source files.
   model: "gpt-4o-mini"
+  # Optional custom OpenAI-compatible base URL (blank = api.openai.com).
+  baseUrl: ""
   secretName: "khoj-agent-openai"
   externalSecret:
     enabled: true

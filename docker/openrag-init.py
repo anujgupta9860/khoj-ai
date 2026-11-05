@@ -29,6 +29,7 @@ EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "openai")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OLLAMA_ENDPOINT = os.environ.get("OLLAMA_ENDPOINT", "")
+OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "").rstrip("/")
 
 
 def call(method, path, payload=None, timeout=30):
@@ -80,6 +81,12 @@ def main():
                   "will fail until you set it in .env and re-run this init.", flush=True)
     if LLM_PROVIDER == "ollama" or EMBEDDING_PROVIDER == "ollama":
         payload["ollama_endpoint"] = OLLAMA_ENDPOINT or "http://host.docker.internal:11434"
+
+    if OPENAI_BASE_URL and (LLM_PROVIDER == "openai" or EMBEDDING_PROVIDER == "openai"):
+        # OpenRAG takes a custom endpoint as the provider's api_base
+        # credential; it then applies to chat AND embeddings.
+        payload["provider_credentials"] = {"openai": {"api_base": OPENAI_BASE_URL}}
+        print(f"[init] custom OpenAI base URL: {OPENAI_BASE_URL}", flush=True)
 
     print(f"[init] onboarding: llm={LLM_PROVIDER}/{LLM_MODEL} "
           f"embedding={EMBEDDING_PROVIDER}/{EMBEDDING_MODEL}", flush=True)

@@ -32,6 +32,8 @@ spec:
               value: {{ .Values.openrag.url }}
             - name: OPENAI_MODEL
               value: {{ .Values.openai.model }}
+            - name: OPENAI_BASE_URL
+              value: {{ .Values.openai.baseUrl | quote }}
             {{- if .Values.openai.secretName }}
             - name: OPENAI_API_KEY
               valueFrom:

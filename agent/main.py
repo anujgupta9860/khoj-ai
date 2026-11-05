@@ -53,6 +53,11 @@ OPENRAG_URL = os.environ.get("OPENRAG_URL", "http://openrag-backend:8000")
 # Without a key the agent answers extractively from the source files.
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+# Optional custom OpenAI-compatible endpoint (proxy / gateway /
+# other provider). Blank or unset = the default OpenAI API base.
+OPENAI_BASE_URL = (
+    os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+).rstrip("/")
 
 
 PUBLIC_URL = os.environ.get("AGENT_PUBLIC_URL", "")
@@ -105,7 +110,7 @@ def rewrite_query(question: str, history: list) -> str | None:
     )
     try:
         resp = requests.post(
-            "https://api.openai.com/v1/chat/completions",
+            f"{OPENAI_BASE_URL}/chat/completions",
             json={
                 "model": OPENAI_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
@@ -237,7 +242,7 @@ def _chat_completion(messages: list, tools: list | None = None) -> dict:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
     resp = requests.post(
-        "https://api.openai.com/v1/chat/completions",
+        f"{OPENAI_BASE_URL}/chat/completions",
         json=payload,
         headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
         timeout=45,

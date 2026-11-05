@@ -63,6 +63,7 @@ KHOJ_SUPER_ADMIN_EMAIL=$KHOJ_SUPER_ADMIN_EMAIL
 OPENRAG_URL=$OPENRAG_URL
 OPENAI_API_KEY=$OPENAI_API_KEY
 OPENAI_MODEL=$OPENAI_MODEL
+OPENAI_BASE_URL=$OPENAI_BASE_URL
 JIRA_BASE_URL=$JIRA_BASE_URL
 JIRA_EMAIL=$JIRA_EMAIL
 JIRA_PROJECT_KEY=$JIRA_PROJECT_KEY
@@ -102,6 +103,7 @@ setup_config() {
   echo "-- Chat agent (OpenAI) --"
   ask_secret OPENAI_API_KEY "OpenAI API key for the chat agent"
   ask OPENAI_MODEL "OpenAI model" "gpt-4o-mini"
+  ask OPENAI_BASE_URL "OpenAI base URL (blank = https://api.openai.com/v1)" ""
   echo "-- Jira ticket button (optional; blank token = feature off) --"
   ask JIRA_BASE_URL "Jira site base URL" "https://khoj.atlassian.net"
   ask JIRA_EMAIL "Jira account email" "anuj.gupta9860@gmail.com"
