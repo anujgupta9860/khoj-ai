@@ -9,21 +9,20 @@
 #   bash scripts/run-local-stack.sh down     # stop the stack (data kept)
 #   bash scripts/run-local-stack.sh logs     # follow all logs
 #
-# Configuration comes from the private setup bucket
-# gs://khoj-setup-innovation-lab (files env.docker / env.local, which
-# hold the real secrets — never commit them):
+# Configuration comes from two env files YOU supply — they hold the
+# real secrets, so keep them in a private store of your own and never
+# commit them:
 #   * env.docker -> .env        (required: docker compose reads .env)
 #   * env.local  -> .env.local  (optional: for scripts/start-local.sh)
-# The script looks for the downloaded files in ~/Downloads first, then
-# tries gsutil, then prints the Cloud Console links so you can grab
-# them in a browser.
+# The script finds each file in ~/Downloads, fetches it with gsutil
+# when you set KHOJ_SETUP_BUCKET to your own private bucket, or takes
+# an explicit path from KHOJ_ENV_DOCKER / KHOJ_ENV_LOCAL.
 #
 # Verified end to end on a Mac mini (Apple Silicon), 2026-11-05.
 set -u
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
-BUCKET="gs://khoj-setup-innovation-lab"
-CONSOLE="https://console.cloud.google.com/storage/browser/_details/khoj-setup-innovation-lab"
+BUCKET="${KHOJ_SETUP_BUCKET:-}"   # optional: your own private bucket
 
 cmd="${1:-up}"
 case "$cmd" in
@@ -66,11 +65,16 @@ if ! docker info >/dev/null 2>&1; then
 fi
 echo "Docker is up."
 
-# --- 2. Config: place .env (and .env.local) from the setup bucket ---------
-place_env() { # place_env <bucket-name> <dest> <required 0|1>
-  local src="$1" dest="$2" required="$3"
+# --- 2. Config: place .env (and .env.local) from the files you supply -----
+place_env() { # place_env <name> <dest> <required 0|1> <explicit path>
+  local src="$1" dest="$2" required="$3" explicit="${4:-}"
   if [ -f "$ROOT/$dest" ]; then
     echo "Found $dest — reusing it."
+    return 0
+  fi
+  if [ -n "$explicit" ] && [ -f "$explicit" ]; then
+    cp "$explicit" "$ROOT/$dest"
+    echo "Copied $explicit -> $dest"
     return 0
   fi
   if [ -f "$HOME/Downloads/$src" ]; then
@@ -78,23 +82,23 @@ place_env() { # place_env <bucket-name> <dest> <required 0|1>
     echo "Copied ~/Downloads/$src -> $dest"
     return 0
   fi
-  if command -v gsutil >/dev/null 2>&1; then
+  if [ -n "$BUCKET" ] && command -v gsutil >/dev/null 2>&1; then
     if gsutil cp "$BUCKET/$src" "$ROOT/$dest" 2>/dev/null; then
       echo "Downloaded $BUCKET/$src -> $dest"
       return 0
-   fi
+    fi
   fi
   if [ "$required" = "1" ]; then
-    echo "Missing $dest and could not fetch $src automatically." >&2
-    echo "Download it from: $CONSOLE/$src" >&2
-    echo "save it as $ROOT/$dest, then re-run this script." >&2
+    echo "Missing $dest and no $src found." >&2
+    echo "Put your $src (from your private config store) in ~/Downloads," >&2
+    echo "or point KHOJ_ENV_DOCKER at it / set KHOJ_SETUP_BUCKET, then re-run." >&2
     exit 1
   fi
-  echo "Note: $dest not found (optional, skipped) — get $src from $CONSOLE/$src if you want it."
+  echo "Note: $dest not found (optional, skipped) — place $src in ~/Downloads if you want it."
   return 0
 }
-place_env env.docker .env 1
-place_env env.local .env.local 0
+place_env env.docker .env 1 "${KHOJ_ENV_DOCKER:-}"
+place_env env.local .env.local 0 "${KHOJ_ENV_LOCAL:-}"
 chmod 600 "$ROOT/.env" 2>/dev/null || true
 
 # Ports (defaults mirror docker-compose.yml; .env may override)

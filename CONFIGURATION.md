@@ -101,10 +101,9 @@ creation: `POST /api/jira/ticket` with `{question, answer, orgId?}`.
 ## 5. Procedure A — run everything locally
 
 ```bash
-# One command (installs/starts Docker, places the config files that
-# were downloaded from the private setup bucket
-# gs://khoj-setup-innovation-lab — env.docker -> .env, env.local ->
-# .env.local — then compose up + health waits + URL list):
+# One command (installs/starts Docker, places the config files you
+# supply — env.docker -> .env, env.local -> .env.local — then compose
+# up + health waits + URL list):
 bash scripts/run-local-stack.sh    # … down | logs
 
 # Manual equivalent — complete stack, Docker only (Khoj + agent + the

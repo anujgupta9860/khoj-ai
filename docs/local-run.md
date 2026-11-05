@@ -1,6 +1,6 @@
 # Run Khoj locally (end to end)
 
-## Fastest path — one script, config from the setup bucket
+## Fastest path — one script, bring your own config files
 
 Verified end to end on a Mac mini (Apple Silicon), 2026-11-05.
 
@@ -11,22 +11,21 @@ Verified end to end on a Mac mini (Apple Silicon), 2026-11-05.
    cd ~/khoj-ai
    ```
 
-2. Download the two config files from the private setup bucket
-   **gs://khoj-setup-innovation-lab** — they hold the real secrets
-   (OpenAI key, Jira token, passwords), so keep them private and never
-   commit them:
+2. Prepare the two config files and download them into `~/Downloads`.
+   They hold the real secrets (OpenAI key, Jira token, passwords), so
+   keep them in a private store of your own (a private cloud bucket, a
+   password manager, …) and never commit them — both names are
+   gitignored:
    - `env.docker` — for the Docker stack (becomes `.env`)
    - `env.local` — for the no-Docker script (becomes `.env.local`)
 
-   Either with gsutil:
+   Start from `.env.local.example` for the variable list. If your
+   store is a GCS bucket, for example:
 
    ```bash
-   gsutil cp gs://khoj-setup-innovation-lab/env.docker ~/Downloads/env.docker
-   gsutil cp gs://khoj-setup-innovation-lab/env.local  ~/Downloads/env.local
+   gsutil cp gs://YOUR-PRIVATE-BUCKET/env.docker ~/Downloads/env.docker
+   gsutil cp gs://YOUR-PRIVATE-BUCKET/env.local  ~/Downloads/env.local
    ```
-
-   …or in a browser from the Cloud Console, e.g.
-   `https://console.cloud.google.com/storage/browser/_details/khoj-setup-innovation-lab/env.docker`
 
 3. Run one script — it installs/starts Docker if needed, places the
    config files, brings the whole stack up, waits until every piece

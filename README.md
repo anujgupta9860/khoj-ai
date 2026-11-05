@@ -64,8 +64,8 @@ re-ingestion into OpenRAG.
 ## Run (local smoke test)
 
 ```bash
-bash scripts/run-local-stack.sh   # full stack incl. OpenRAG; config
-                                  # from the setup bucket — docs/local-run.md
+bash scripts/run-local-stack.sh   # full stack incl. OpenRAG; bring
+                                  # your own config — docs/local-run.md
 # UI on http://<host>:8081
 ```
 
