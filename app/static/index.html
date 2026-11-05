@@ -302,8 +302,18 @@ const $ = (id) => document.getElementById(id);
 
 // Khoj built-in auth: the app issues its own token at login/register;
 // it lives in localStorage and rides as a Bearer header on API calls.
-let _token = localStorage.getItem("khoj_token") || null;
-let _email = localStorage.getItem("khoj_email") || "";
+// Some in-app webviews block Web Storage; storage failures must never
+// blank the page, so every access goes through these fail-safe helpers.
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  remove(k) { try { localStorage.removeItem(k); } catch (e) {} },
+  sget(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+  sset(k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} },
+  sremove(k) { try { sessionStorage.removeItem(k); } catch (e) {} },
+};
+let _token = store.get("khoj_token") || null;
+let _email = store.get("khoj_email") || "";
 
 async function token() { return _token; }
 
@@ -311,7 +321,7 @@ async function token() { return _token; }
 {
   const params = new URLSearchParams(location.search);
   const invite = params.get("invite");
-  if (invite) sessionStorage.setItem("khoj_invite", invite);
+  if (invite) store.sset("khoj_invite", invite);
   const slug = params.get("org");
   if (slug) {
     const r = await fetch("/api/public/org/" + encodeURIComponent(slug));
@@ -347,15 +357,15 @@ $("authsubmit").onclick = async () => {
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new Error(data.detail || ("Sign-in failed (" + resp.status + ")"));
     _token = data.token; _email = data.email || $("email").value.trim();
-    localStorage.setItem("khoj_token", _token);
-    localStorage.setItem("khoj_email", _email);
+    store.set("khoj_token", _token);
+    store.set("khoj_email", _email);
     enterApp();
   } catch (e) { $("autherr").textContent = e.message; }
 };
 $("signout").onclick = () => {
   _token = null; _email = "";
-  localStorage.removeItem("khoj_token");
-  localStorage.removeItem("khoj_email");
+  store.remove("khoj_token");
+  store.remove("khoj_email");
   exitApp();
 };
 
@@ -382,7 +392,7 @@ async function enterApp() {
   loadMe();
 }
 
-if (_token) enterApp();
+if (_token) enterApp(); else exitApp();
 
 async function loadMe() {
   const resp = await api("/api/me");
@@ -466,9 +476,9 @@ async function loadAdmin() {
 $("refreshadmin").onclick = loadAdmin;
 
 async function acceptStashedInvite() {
-  const raw = sessionStorage.getItem("khoj_invite");
+  const raw = store.sget("khoj_invite");
   if (!raw) return;
-  sessionStorage.removeItem("khoj_invite");
+  store.sremove("khoj_invite");
   const [orgId, inviteId, secret] = raw.split(".");
   if (!orgId || !inviteId) return;
   const resp = await api("/api/invites/accept", {
