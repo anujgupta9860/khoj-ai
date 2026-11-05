@@ -4,6 +4,10 @@ ingress:
   enabled: true
   host: "136.68.156.112.nip.io"  # public hostname (nip.io wildcard DNS -> the LB IP); the template also keeps a hostless catch-all rule, so the bare IP keeps working
   staticIpName: ""    # GKE reserved static IP name, optional
+# Embedding model the ingestion flow uses (env-forced Langflow global).
+# GKE runs Gemini embeddings via the OpenAI-compatible endpoint.
+embeddingModel: "gemini-embedding-001"
+
 superuser: langflow
 # Password is NOT a value: it syncs from Google Secret Manager
 # (openrag-langflow-superuser-password) via External Secrets Operator.

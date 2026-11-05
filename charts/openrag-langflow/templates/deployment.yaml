@@ -25,6 +25,11 @@ spec:
               valueFrom:
                 secretKeyRef: { name: langflow-secrets, key: LANGFLOW_SUPERUSER_PASSWORD }
             - { name: LANGFLOW_ALLOW_CUSTOM_COMPONENTS, value: "true" }
+            # Keep Langflow's DB (flows, global variables) on the PVC.
+            # Without this the DB lives in the container filesystem and
+            # every pod restart wipes the flows OpenRAG depends on
+            # (bit us 2026-11-05: a restart erased the ingest flow).
+            - { name: LANGFLOW_CONFIG_DIR, value: /app/langflow-data }
             - { name: DOCLING_SERVE_URL, value: {{ .Values.doclingUrl }} }
             # Upstream compose parity: flows running inside Langflow
             # reach OpenSearch + the embedding provider through
@@ -39,7 +44,7 @@ spec:
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef: { name: langflow-secrets, key: OPENAI_API_KEY }
-            - { name: SELECTED_EMBEDDING_MODEL, value: "text-embedding-3-small" }
+            - { name: SELECTED_EMBEDDING_MODEL, value: {{ .Values.embeddingModel | default "gemini-embedding-001" }} }
             - { name: LANGFLOW_VARIABLES_TO_GET_FROM_ENVIRONMENT, value: "JWT,OPENRAG-QUERY-FILTER,OPENSEARCH_PASSWORD,OPENSEARCH_URL,DOCLING_SERVE_URL,OWNER,OWNER_NAME,OWNER_EMAIL,CONNECTOR_TYPE,DOCUMENT_ID,SOURCE_URL,ALLOWED_USERS,ALLOWED_GROUPS,FILENAME,MIMETYPE,FILESIZE,SELECTED_EMBEDDING_MODEL,OPENAI_API_KEY,ANTHROPIC_API_KEY,WATSONX_API_KEY,WATSONX_URL,WATSONX_PROJECT_ID,OLLAMA_BASE_URL,OPENSEARCH_INDEX_NAME" }
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
