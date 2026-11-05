@@ -1,8 +1,6 @@
 fastapi==0.115.*
 uvicorn[standard]==0.30.*
 requests==2.32.*
-firebase-admin==6.*
 google-cloud-storage==2.*
-google-auth==2.*
 python-multipart==0.0.*
 pydantic==2.*

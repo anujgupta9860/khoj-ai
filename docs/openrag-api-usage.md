@@ -16,7 +16,7 @@ OpenRAG's own frontend proxy.*
 | 5 | `POST /search` | Web — `_openrag_search()` in `app/main.py`; Agent — `_openrag_chunks()` in `agent/main.py` | All retrieval: Khoj search UI **and** every chat retrieval (seed + tool loop) |
 
 That is the entire integration surface. Everything else Khoj does — orgs, memberships,
-invites, upload records, chat history, metrics — lives in Firestore/GCS and never touches
+invites, upload records, chat history, metrics — lives in SQLite + the originals storage backend and never touches
 OpenRAG.
 
 ## Per stage of the document lifecycle
@@ -31,7 +31,7 @@ multipart form field "file" = the file bytes, named "{docId}--{filename}"
 
 - Before this call, the web app stores the original in GCS under the scope prefix
   (`users/{uid}/…` or `orgs/{orgId}/…`) and computes the scoped OpenRAG name.
-- The returned `task_id` is stored on the Firestore upload record (`openragTask`).
+- The returned `task_id` is stored on the SQLite upload record (`openragTask`).
 - Ingestion itself (parse → chunk → embed → index) runs asynchronously inside OpenRAG:
   Docling parses, a Langflow flow chunks/embeds, OpenSearch stores the chunks.
 - Right after triggering ingestion, the web app also calls:
@@ -58,7 +58,7 @@ GET /files
 ```
 
 - The web app fetches the full file list (cached for 5 seconds, shared across requests) and
-  joins it with the caller's Firestore upload records by the scoped filename.
+  joins it with the caller's SQLite upload records by the scoped filename.
 - A document shows as **ready** when its name is present in `/files`; chunk counts and
   indexed time come from this response.
 - Failure surfacing: for records that carry a task id, `_openrag_task_error()` calls
@@ -108,7 +108,7 @@ own endpoint from an operator shell:
 POST /documents/delete-by-filename   { "filename": "{docId}--{filename}" }
 ```
 
-Wiring this into the Khoj UI (plus deleting the GCS original and the Firestore record) is a
+Wiring this into the Khoj UI (plus deleting the stored original and the SQLite record) is a
 known follow-up.
 
 ## Sequence diagrams
@@ -122,7 +122,7 @@ sequenceDiagram
     actor U as User
     participant W as Khoj Web
     participant G as GCS
-    participant F as Firestore
+    participant F as SQLite
     participant O as OpenRAG Backend
     participant D as Docling / Langflow
     participant S as OpenSearch
@@ -152,7 +152,7 @@ sequenceDiagram
 sequenceDiagram
     actor U as User
     participant W as Khoj Web
-    participant F as Firestore
+    participant F as SQLite
     participant O as OpenRAG Backend
 
     U->>W: open Documents
@@ -177,7 +177,7 @@ sequenceDiagram
     actor U as User
     participant W as Khoj Web
     participant A as Khoj Agent (A2A)
-    participant F as Firestore
+    participant F as SQLite
     participant O as OpenRAG Backend
     participant G as GCS
     participant M as OpenAI gpt-4o-mini

@@ -1,22 +1,19 @@
 """Local wiring tests: MCP endpoint, per-user isolation, upload record.
 
-Runs fully offline - Firebase, GCP auth, GCS and the OpenRAG HTTP
-calls are stubbed. Run:  python tests/test_app_local.py
+Runs fully offline - auth is bypassed at require_user, the storage
+backend is a fake, and the OpenRAG HTTP calls are stubbed. Metadata
+runs on a throwaway SQLite dir. Run:  python tests/test_app_local.py
 """
 
 import io
 import os
 import sys
+import tempfile
 
-os.environ.setdefault("GCP_PROJECT", "innovation-lab-2026")
-os.environ.setdefault("KHOJ_BUCKET", "khoj-ai-corpus-innovation-lab")
 os.environ.setdefault("OPENRAG_URL", "http://openrag-backend:8000")
+os.environ["KHOJ_DATA_DIR"] = tempfile.mkdtemp(prefix="khoj-test-")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-import firebase_admin
-
-firebase_admin.initialize_app = lambda *a, **k: None  # no ADC locally
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -111,35 +108,22 @@ assert main.openrag_filename("doc-1", "x.md") == "doc-1--x.md"
 assert main.scope_of({"uid": "abc"}, None) == ("users/abc", "user:abc")
 assert main.scope_of({"uid": "abc"}, "org-9") == ("orgs/org-9", "org:org-9")
 
-# --- upload: file kept in GCS, ingested into OpenRAG under its doc name ----
+# --- upload: file kept in the storage backend, ingested into OpenRAG ----
 blobs = {}
 
 
-class FakeBlob:
-    def __init__(self, name):
-        self.name = name
+class FakeStorage:
+    backend = "fake"
 
-    def upload_from_file(self, fh, content_type=None):
-        blobs[self.name] = ("file", content_type)
+    def put(self, key, data, mime=""):
+        blobs[key] = ("str", data)
 
-    def upload_from_string(self, data, content_type=None):
-        blobs[self.name] = ("str", data)
-
-
-class FakeBucket:
-    def blob(self, name):
-        return FakeBlob(name)
+    def get(self, key):
+        item = blobs.get(key)
+        return item[1] if item else None
 
 
-class FakeClient:
-    def __init__(self, project=None):
-        pass
-
-    def bucket(self, name):
-        return FakeBucket()
-
-
-main.storage.Client = FakeClient
+main.get_storage = lambda: FakeStorage()
 
 ingest_calls = []
 
@@ -319,8 +303,8 @@ assert [d["title"] for d in r.json()["documents"]] == ["global.md", "mine.md", "
 r = client.get(f"/api/documents?orgId={ORG_ID}", headers=H)
 assert [d["title"] for d in r.json()["documents"]] == ["biz.md", "global.md"]
 
-# add a member (email resolved through Firebase Auth)
-main.fb_auth.get_user_by_email = lambda email: SimpleNamespace(uid="member-9", email=email)
+# add a member (email resolved against the account store)
+main._users.get_by_email = lambda email: {"uid": "member-9", "email": email}
 r = client.post(f"/api/orgs/{ORG_ID}/members", json={"email": "m@x.com"}, headers=H)
 assert r.status_code == 200 and r.json()["role"] == "member", r.text
 
@@ -344,7 +328,7 @@ r = client.post(
 )
 assert r.status_code == 403, r.text
 
-# the admin can - the file lands in the org's GCS prefix and goes to
+# the admin can - the file lands in the org's storage prefix and goes to
 # OpenRAG under the org-scoped doc name
 CURRENT["user"] = USER
 blobs.clear()

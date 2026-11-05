@@ -1,55 +1,69 @@
-"""Local wiring tests for the Khoj A2A agent. Fully offline: Firebase
-token verification, the OpenRAG search call, and the OpenAI call are
-stubbed. Run:  python agent/test_agent_local.py
+"""Local wiring tests for the Khoj A2A agent. Fully offline: token
+verification is stubbed, the web-service corpus/raw calls are faked,
+and the OpenRAG search + OpenAI calls are stubbed.
+Run:  python agent/test_agent_local.py
 """
 
 import os
 import sys
 
-os.environ.setdefault("GCP_PROJECT", "innovation-lab-2026")
-os.environ.setdefault("KHOJ_BUCKET", "khoj-ai-corpus-innovation-lab")
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-import firebase_admin
-
-firebase_admin.initialize_app = lambda *a, **k: None
 
 from fastapi.testclient import TestClient  # noqa: E402
 
 import agent.main as agent_main  # noqa: E402
-from app.orgs import InMemoryOrgService  # noqa: E402
 
-agent_main.fb_auth.verify_id_token = lambda token: {
+agent_main.verify_token = lambda token: {
     "uid": "user-123", "email": "u@example.com",
 }
-agent_main._org_service = InMemoryOrgService()
-agent_main.gcp_token = lambda: "fake-token"
 agent_main.OPENAI_API_KEY = "test-key"
 
-# the caller's corpus: one document, known to the upload records
-agent_main._org_service.record_upload({
-    "docId": "doc-test123",
-    "scopeKey": "user:user-123",
-    "uid": "user-123",
-    "orgId": None,
-    "filename": "doc.md",
-    "openragTask": "task-0",
-    "uploadedAt": 0,
-})
 OPENRAG_NAME = "doc-test123--doc.md"
-
-# the global corpus (platform org documents) is searchable by everyone
-agent_main._org_service.record_upload({
-    "docId": "doc-global1",
-    "scopeKey": "org:khoj",
-    "uid": "admin-0",
-    "orgId": "khoj",
-    "filename": "handbook.md",
-    "openragTask": "task-0",
-    "uploadedAt": 0,
-})
 GLOBAL_NAME = "doc-global1--handbook.md"
+
+# The caller's corpus as the web service reports it: one personal
+# document plus the global corpus (platform org docs are searchable by
+# everyone). Raw originals 404 here, mirroring the old behaviour where
+# the fetch failed and answers ran on snippets; the raw path itself is
+# unit-checked at the end of this file.
+CORPUS_FILES = [
+    {"docId": "doc-test123", "filename": "doc.md",
+     "openragName": OPENRAG_NAME, "scope": "users/user-123"},
+    {"docId": "doc-global1", "filename": "handbook.md",
+     "openragName": GLOBAL_NAME, "scope": "orgs/khoj"},
+]
+
+
+class GetResp:
+    def __init__(self, payload=None, status=200, content=b""):
+        self._payload = payload
+        self.status_code = status
+        self.content = content
+        self.text = str(payload)[:200]
+
+    def json(self):
+        return self._payload
+
+
+RAW_DOCS = {}
+
+
+def fake_get(url, params=None, headers=None, timeout=None):
+    if url.endswith("/api/agent/corpus"):
+        if params and params.get("orgId"):
+            # the web service enforces membership; this caller belongs
+            # to no business
+            return GetResp({"detail": "Not a member of this business"}, status=403)
+        return GetResp({"files": CORPUS_FILES})
+    if "/api/documents/" in url and url.endswith("/raw"):
+        doc_id = url.split("/api/documents/")[1].split("/")[0]
+        if doc_id in RAW_DOCS:
+            return GetResp(status=200, content=RAW_DOCS[doc_id])
+        return GetResp(status=404)
+    raise AssertionError(f"unexpected GET {url}")
+
+
+agent_main.requests.get = fake_get
 
 calls = []
 
@@ -156,7 +170,7 @@ assert model_calls and model_calls[-1]["model"] == "gpt-4o-mini", model_calls
 # small documents are handed to the model as FULL TEXT, not just chunks
 # (form-like documents chunk badly - glossaries outrank the filled values)
 real_fetch = agent_main.fetch_document_text
-agent_main.fetch_document_text = lambda scope, filename: (
+agent_main.fetch_document_text = lambda doc_id, filename, user=None: (
     "FULLTEXT MARKER: the pump warranty is 2 years, parts and labour."
     if filename == "doc.md" else None
 )
@@ -309,7 +323,7 @@ assert "TECHNICAL SKILLS" in passages
 assert "distributed systems design for resilient production services" in passages
 
 original_fetch = agent_main.fetch_document_text
-agent_main.fetch_document_text = lambda scope, filename: resume_text if filename.endswith(".docx") else None
+agent_main.fetch_document_text = lambda doc_id, filename, user=None: resume_text if filename.endswith(".docx") else None
 full_answer = agent_main.extractive_answer(
     "What all skill Anuj Gupta has",
     [{"title": "anujResume_2024.docx", "snippets": ["partial"], "scope": "user-123"}],
@@ -329,3 +343,12 @@ assert "extractive mode" in ans and ans_extra == [], ans
 agent_main.OPENAI_API_KEY = "test-key"
 
 print("ALL AGENT TESTS PASSED")
+
+# --- full-text fetch via the web service (raw original) ---------------------
+RAW_DOCS["doc-test123"] = b"# doc\nThe pump warranty is 2 years."
+agent_main._TEXT_CACHE.clear()
+_text = agent_main.fetch_document_text(
+    "doc-test123", "doc.md", {"_auth": "Bearer x"})
+assert _text and "pump warranty is 2 years" in _text, _text
+assert agent_main.fetch_document_text("doc-missing", "x.md", {"_auth": "Bearer x"}) is None
+print("raw fetch ok")

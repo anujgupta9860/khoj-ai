@@ -4,6 +4,8 @@ metadata:
   name: khoj
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate   # the data PVC is RWO - never run two pods at once
   selector:
     matchLabels:
       app: khoj
@@ -20,18 +22,29 @@ spec:
           ports:
             - containerPort: 8080
           env:
-            - name: GCP_PROJECT
-              value: {{ .Values.gcp.project }}
+            - name: KHOJ_DATA_DIR
+              value: {{ .Values.data.dir | quote }}
+            - name: KHOJ_STORAGE
+              value: {{ .Values.storage.backend | quote }}
+            {{- if .Values.storage.bucket }}
             - name: KHOJ_BUCKET
-              value: {{ .Values.gcp.bucket }}
+              value: {{ .Values.storage.bucket | quote }}
+            {{- end }}
+            - name: KHOJ_SUPER_ADMIN_EMAIL
+              value: {{ .Values.auth.superAdminEmail | quote }}
+            - name: KHOJ_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.secretName }}
+                  key: KHOJ_AUTH_SECRET
+                  # Optional: without it the app generates one into the
+                  # data dir - but then it will NOT match the agent's
+                  # secret, so set the GSM secret for real deployments.
+                  optional: true
             - name: OPENRAG_URL
               value: {{ .Values.openrag.url }}
             - name: KHOJ_AGENT_URL
               value: {{ .Values.agent.url }}
-            - name: FIREBASE_API_KEY
-              value: {{ .Values.firebase.apiKey }}
-            - name: FIREBASE_AUTH_DOMAIN
-              value: {{ .Values.firebase.authDomain }}
             - name: JIRA_BASE_URL
               value: {{ .Values.jira.baseUrl | quote }}
             - name: JIRA_EMAIL
@@ -48,6 +61,9 @@ spec:
                   # Optional: the pod must start before the GSM secret
                   # exists; the feature simply stays disabled until then.
                   optional: true
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.data.dir }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           readinessProbe:
@@ -56,3 +72,7 @@ spec:
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: khoj-data

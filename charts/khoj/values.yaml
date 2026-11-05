@@ -5,18 +5,38 @@ image:
 
 replicaCount: 1
 
-# GCP wiring (no secrets - identity comes from Workload Identity)
-gcp:
-  project: innovation-lab-2026
-  bucket: "khoj-ai-corpus-innovation-lab"      # GCS bucket (original files, cold copies)
+# Khoj state: one data directory (SQLite khoj.db + locally stored
+# originals) on the PVC below. Nothing here needs Google APIs unless
+# storage.backend is set to gcs.
+data:
+  dir: /data
+  size: 2Gi
+  storageClass: ""        # cluster default
+
+# Original-file storage - the deployer chooses the backend:
+#   local: originals on the data PVC (zero cloud dependency)
+#   gcs:   originals in the named GCS bucket (needs Workload Identity
+#          with storage access - see workloadIdentity below)
+storage:
+  backend: local
+  bucket: ""
+
+# Built-in auth (app/auth.py): accounts live in SQLite; sessions are
+# app-issued JWTs signed with a shared secret. The secret VALUE comes
+# from GSM via the ExternalSecret below, never from values.
+auth:
+  # Comma-separated emails that become platform super admins at
+  # sign-in (they are seeded as admins of the platform org).
+  superAdminEmail: "anuj.gupta9860@gmail.com"
+  secretName: khoj-auth
+  externalSecret:
+    enabled: true
+    gsmKey: khoj-auth-secret        # Google Secret Manager secret holding the signing secret
+    refreshInterval: 1h
 
 # OpenRAG: the single retrieval engine (in-cluster service)
 openrag:
   url: "http://openrag-backend:8000"
-
-firebase:
-  apiKey: "AIzaSyBj_VxGuj_iVjrnnjzS2g8S0zRfg4ItYX4"   # Firebase web config (public identifiers)
-  authDomain: "innovation-lab-2026.firebaseapp.com"
 
 # A2A chat agent (in-cluster address of the khoj-agent service)
 agent:
@@ -40,8 +60,9 @@ jira:
     refreshInterval: 1h
 
 workloadIdentity:
-  # Google service account the pods act as (storage object admin on the
-  # bucket, firestore, firebase auth)
+  # Google service account the pods act as. Only used when
+  # storage.backend=gcs (storage access to the bucket). Empty = no
+  # binding, which is all a local-storage deployment needs.
   gsaEmail: ""
 
 service:

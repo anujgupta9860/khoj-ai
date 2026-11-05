@@ -20,10 +20,14 @@ spec:
           ports:
             - containerPort: 8080
           env:
-            - name: GCP_PROJECT
-              value: {{ .Values.gcp.project }}
-            - name: KHOJ_BUCKET
-              value: {{ .Values.gcp.bucket }}
+            - name: KHOJ_WEB_URL
+              value: {{ .Values.web.url }}
+            - name: KHOJ_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.secretName }}
+                  key: KHOJ_AUTH_SECRET
+                  optional: true
             - name: OPENRAG_URL
               value: {{ .Values.openrag.url }}
             - name: OPENAI_MODEL

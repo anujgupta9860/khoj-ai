@@ -7,23 +7,29 @@ Isolation is enforced server-side: OpenRAG is the single retrieval
 engine, and every document Khoj sends it is stored under a unique name
 derived from the scope + filename ("<docId>--<filename>"). Every search
 is filtered to exactly the caller's document names, built only from the
-verified token (+ a Firestore membership check for org corpora) - scope
-ids never come from raw client assertions. The original file is also
-kept in GCS as a cold copy (source of truth for re-ingestion).
+verified token (+ a membership check for org corpora) - scope ids never
+come from raw client assertions. The original file is also kept in the
+configured storage backend (app/storage.py: local disk by default, or a
+GCS bucket when KHOJ_STORAGE=gcs) as the source of truth for
+re-ingestion and full-text handoff.
+
+Auth is built in (app/auth.py): email + password accounts in SQLite,
+sessions as app-issued JWTs. No Firebase, no Google libraries on the
+default path; all state lives in <KHOJ_DATA_DIR>/khoj.db plus the
+storage backend.
 
 Surfaces:
   Web UI + API (static app in app/static):
-    GET  /api/config       Firebase web config (public identifiers)
-    GET  /api/me           Who am I (+ admin claim, kept for future use)
-    POST /api/search       Search my documents (OpenRAG)
-    GET  /api/documents    List my documents
-    POST /api/upload       Upload a document into my corpus
+    POST /api/auth/register  Create an account (returns a token)
+    POST /api/auth/login     Sign in (returns a token)
+    GET  /api/config         Deployment info (auth mode, storage backend)
+    GET  /api/me             Who am I (+ super-admin flag)
+    POST /api/search         Search my documents (OpenRAG)
+    GET  /api/documents      List my documents
+    POST /api/upload         Upload a document into my corpus
   MCP server (app/mcp_server.py) for the user's own agent:
-    POST /mcp              Streamable-HTTP MCP endpoint (Bearer ID token);
+    POST /mcp              Streamable-HTTP MCP endpoint (Bearer token);
                            tools: search_documents, list_my_documents
-
-All GCP access uses Application Default Credentials (Workload Identity on
-GKE) - no keys in code or repo.
 """
 
 import hashlib
@@ -36,24 +42,16 @@ import time
 import uuid
 
 import requests
-from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-import firebase_admin
-from firebase_admin import auth as fb_auth
-from firebase_admin import firestore as fb_firestore
-from fastapi import Form
-from google.auth import default as google_auth_default
-from google.auth.transport.requests import Request as GoogleAuthRequest
-from google.cloud import storage
-
+from . import auth as khoj_auth
+from .db import Users, connect as db_connect
 from .mcp_server import handle_rpc
-from .orgs import PLATFORM_ORG_ID, ROLES, UPLOAD_ROLES, FirestoreOrgService
-
-PROJECT = os.environ["GCP_PROJECT"]
-BUCKET = os.environ["KHOJ_BUCKET"]
+from .orgs import PLATFORM_ORG_ID, ROLES, UPLOAD_ROLES, SqliteOrgService
+from .storage import get_storage
 # OpenRAG is the single retrieval engine (in-cluster service).
 OPENRAG_URL = os.environ.get("OPENRAG_URL", "http://openrag-backend:8000")
 # NOTE: the OpenRAG backend serves UNPREFIXED routes (/search, /files,
@@ -68,13 +66,11 @@ OPENRAG_URL = os.environ.get("OPENRAG_URL", "http://openrag-backend:8000")
 # searches listed documents instead of returning nothing.
 MIN_SCORE = float(os.environ.get("KHOJ_MIN_SCORE", "1.5"))
 
-FIREBASE_WEB_CONFIG = {
-    "apiKey": os.environ.get("FIREBASE_API_KEY", ""),
-    "authDomain": os.environ.get("FIREBASE_AUTH_DOMAIN", ""),
-    "projectId": PROJECT,
+SUPER_ADMIN_EMAILS = {
+    e.strip().lower()
+    for e in os.environ.get("KHOJ_SUPER_ADMIN_EMAIL", "").split(",")
+    if e.strip()
 }
-
-firebase_admin.initialize_app()
 
 app = FastAPI(title="Khoj.ai")
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -91,11 +87,64 @@ def clean_snippet(text: str) -> str:
 
 def require_user(authorization: str | None) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing ID token")
+        raise HTTPException(status_code=401, detail="Missing token")
     try:
-        return fb_auth.verify_id_token(authorization.split(" ", 1)[1])
+        return khoj_auth.verify_token(authorization.split(" ", 1)[1])
     except Exception:
-        raise HTTPException(status_code=401, detail="Invalid ID token")
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+_users = Users()
+
+
+def _maybe_bootstrap_super_admin(user: dict) -> None:
+    """Accounts whose email is configured as a platform super admin
+    (KHOJ_SUPER_ADMIN_EMAIL) join the platform org as admins — the same
+    super-admin mechanism as before, bootstrapped from config instead
+    of a manual database edit."""
+    if (user.get("email") or "").lower() in SUPER_ADMIN_EMAILS:
+        try:
+            org_service().ensure_platform_org(user)
+        except Exception:
+            pass
+
+
+class AuthBody(BaseModel):
+    email: str
+    password: str
+
+
+def _auth_response(user: dict) -> dict:
+    _maybe_bootstrap_super_admin(user)
+    return {
+        "token": khoj_auth.issue_token(user["uid"], user["email"]),
+        "email": user["email"],
+        "uid": user["uid"],
+    }
+
+
+@app.post("/api/auth/register")
+def auth_register(body: AuthBody):
+    email = body.email.strip().lower()
+    if "@" not in email or len(email) > 254:
+        raise HTTPException(status_code=422, detail="A valid email is required")
+    if len(body.password) < 8:
+        raise HTTPException(status_code=422, detail="Password must be at least 8 characters")
+    if _users.get_by_email(email):
+        raise HTTPException(status_code=409, detail="An account with that email already exists")
+    try:
+        user = _users.create_user(email, body.password)
+    except Exception:
+        raise HTTPException(status_code=409, detail="An account with that email already exists")
+    return _auth_response(user)
+
+
+@app.post("/api/auth/login")
+def auth_login(body: AuthBody):
+    user = _users.authenticate(body.email, body.password)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Email or password is incorrect")
+    return _auth_response(user)
 
 
 def document_id(scope: str, filename: str) -> str:
@@ -111,7 +160,7 @@ def openrag_filename(doc_id: str, filename: str) -> str:
 
 
 def scope_of(user: dict, org_id: str | None) -> tuple[str, str]:
-    """(GCS scope prefix, Firestore scope key) for a corpus. Org
+    """(storage scope prefix, scope key) for a corpus. Org
     authorization (membership + approval) is checked by callers via
     org_role/org_active before this is used for access."""
     if org_id:
@@ -165,7 +214,7 @@ _org_service = None
 def org_service():
     global _org_service
     if _org_service is None:
-        _org_service = FirestoreOrgService(fb_firestore.client())
+        _org_service = SqliteOrgService(db_connect)
     return _org_service
 
 
@@ -386,7 +435,11 @@ class SearchBody(BaseModel):
 
 @app.get("/api/config")
 def config():
-    return FIREBASE_WEB_CONFIG
+    try:
+        backend = get_storage().backend
+    except Exception:
+        backend = "unknown"
+    return {"auth": "khoj", "storage": backend}
 
 
 @app.get("/api/me")
@@ -394,7 +447,7 @@ def me(authorization: str | None = Header(default=None)):
     user = require_user(authorization)
     return {
         "email": user.get("email"),
-        "admin": bool(user.get("admin")),
+        "admin": is_super_admin(user),
         "superAdmin": is_super_admin(user),
     }
 
@@ -415,8 +468,8 @@ class ChatBody(BaseModel):
 def chat(body: ChatBody, authorization: str | None = Header(default=None)):
     """Chat panel backend. The web service acts as an A2A client: it
     sends a JSON-RPC message/send to the Khoj A2A agent (AgentCard at
-    <agent>/.well-known/agent-card.json) carrying the caller's Firebase
-    token, and returns the agent's reply."""
+    <agent>/.well-known/agent-card.json) carrying the caller's token,
+    and returns the agent's reply."""
     user = require_user(authorization)
     agent_url = os.environ.get("KHOJ_AGENT_URL", "http://khoj-agent")
     context_id = body.contextId or uuid.uuid4().hex
@@ -603,6 +656,71 @@ def documents(orgId: str | None = None, authorization: str | None = Header(defau
     return {"documents": list_documents(user, org_id=orgId)}
 
 
+def _scope_prefix_of(rec: dict, caller: dict) -> str:
+    """Storage scope prefix for an upload record (its owner's prefix —
+    for global-corpus records, the platform org's)."""
+    key = rec.get("scopeKey", "")
+    if key.startswith("org:"):
+        return f"orgs/{key[4:]}"
+    if key.startswith("user:"):
+        return f"users/{key[5:]}"
+    scope, _ = scope_of(caller, rec.get("orgId"))
+    return scope
+
+
+@app.get("/api/agent/corpus")
+def agent_corpus(orgId: str | None = None, authorization: str | None = Header(default=None)):
+    """The caller's searchable corpus for the A2A agent: authorization
+    (membership + approval) is enforced here, and the agent receives
+    only document descriptors — never scope assertions of its own.
+    Replaces the agent's former direct database reads."""
+    user = require_user(authorization)
+    authorize_corpus(user, orgId)
+    files = []
+    for rec in _corpus_records(user, orgId):
+        files.append({
+            "docId": rec.get("docId", ""),
+            "filename": rec.get("filename", ""),
+            "openragName": rec.get("_openrag_name", ""),
+            "scope": _scope_prefix_of(rec, user),
+        })
+    return {"files": files}
+
+
+@app.get("/api/documents/{doc_id}/raw")
+def document_raw(doc_id: str, authorization: str | None = Header(default=None)):
+    """The stored original of one document. Access: the caller's own
+    upload, an upload of a business they belong to, or the global
+    corpus. Used by the chat agent's full-text handoff (small docs are
+    read whole) — the agent holds no storage credentials of its own."""
+    user = require_user(authorization)
+    svc = org_service()
+    record = None
+    for rec in svc.list_all_uploads(limit=5000):
+        if rec.get("docId") == doc_id:
+            record = rec
+            break
+    if record is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    org_id = record.get("orgId")
+    if org_id == PLATFORM_ORG_ID:
+        pass  # global corpus: readable by every signed-in user
+    elif org_id:
+        org_role(user, org_id)
+    elif record.get("uid") != user["uid"]:
+        raise HTTPException(status_code=403, detail="Not your document")
+    data = get_storage().get(
+        f"{_scope_prefix_of(record, user)}/{record.get('filename', '')}"
+    )
+    if data is None:
+        raise HTTPException(status_code=404, detail="Stored original not found")
+    mime = _MIME_BY_EXT.get(
+        os.path.splitext(record.get("filename", ""))[1].lower(),
+        "application/octet-stream",
+    )
+    return Response(content=data, media_type=mime)
+
+
 # --- Businesses (organizations) ---------------------------------------------
 
 class OrgBody(BaseModel):
@@ -642,15 +760,14 @@ def add_org_member(org_id: str, body: MemberBody, authorization: str | None = He
     org_role(user, org_id, allowed=UPLOAD_ROLES)
     if body.role not in ("admin", "member"):
         raise HTTPException(status_code=422, detail="Role must be admin or member")
-    try:
-        target = fb_auth.get_user_by_email(body.email.strip())
-    except Exception:
+    target = _users.get_by_email(body.email.strip())
+    if target is None:
         raise HTTPException(
             status_code=404,
             detail="No Khoj account with that email - they must sign up first",
         )
     return org_service().add_member(
-        org_id, {"uid": target.uid, "email": target.email}, role=body.role
+        org_id, {"uid": target["uid"], "email": target["email"]}, role=body.role
     )
 
 
@@ -854,7 +971,8 @@ def upload(
     """Upload into my corpus - or, with orgId, into a business corpus
     the caller owns or admins. The file goes to OpenRAG under its
     doc-id-prefixed name (the corpus boundary every search filter keys
-    on); the original is also kept in GCS as a cold copy."""
+    on); the original is also kept in the storage backend (local disk
+    or GCS, per KHOJ_STORAGE) as the source of truth."""
     user = require_user(authorization)
     filename = os.path.basename(file.filename or "document")
     mime = file.content_type or _MIME_BY_EXT.get(
@@ -866,8 +984,7 @@ def upload(
     scope, scope_key = scope_of(user, orgId)
     data = file.file.read()
 
-    bucket = storage.Client(project=PROJECT).bucket(BUCKET)
-    bucket.blob(f"{scope}/{filename}").upload_from_string(data, content_type=mime)
+    get_storage().put(f"{scope}/{filename}", data, mime)
 
     doc_id = document_id(scope, filename)
     or_name = openrag_filename(doc_id, filename)

@@ -14,10 +14,10 @@
 ## 1. Prerequisites
 
 - GCP project with billing; enable APIs: `container`, `artifactregistry`,
-  `secretmanager`, `cloudbuild`, `firestore`, `storage`.
+  `secretmanager`, `cloudbuild`, `storage` (storage only for the optional gcs backend).
 - Tools: `gcloud`, `kubectl`, `helm` (v3), `git`.
 - An OpenAI API key (chat model `gpt-4o-mini`, embeddings `text-embedding-3-small`).
-- A GCS bucket for uploaded originals and a Firestore database (**Native mode**) —
+- A PersistentVolume for Khoj's data dir (SQLite + local originals). A GCS bucket is needed only with `KHOJ_STORAGE=gcs` —
   created once, outside Helm.
 
 ```bash
@@ -131,13 +131,13 @@ Key values (secrets all via ESO references, §4):
 
 - `khoj` (web): `OPENRAG_URL=http://openrag-backend:8000` — the backend's **unprefixed**
   routes are the contract (`/search`, `/files`, `/router/upload_ingest`, `/knowledge-filter`);
-  `/api/*` will 404 in-cluster. GCS bucket name, GCP project, `KHOJ_MIN_SCORE` (relevance
-  floor, default `1.5`).
+  `/api/*` will 404 in-cluster. `KHOJ_MIN_SCORE` (relevance floor, default `1.5`); storage backend values (§5).
 - `khoj-agent`: `OPENRAG_URL` same; `OPENAI_MODEL=gpt-4o-mini` (match OpenRAG's configured
   chat model); OpenAI key via its ExternalSecret (§4).
-- Firestore needs two **collection-group indexes** before first traffic, or org/invite
-  endpoints 500: `members` on `uid`, `invites` on `email`. Create them in the console or
-  with `gcloud firestore indexes composite create`; wait for state READY.
+- Before first traffic, create the GSM secret `khoj-auth-secret` (any long random
+  value) — both Khoj services sync it as their shared token-signing secret. Accounts
+  and metadata live in SQLite on the data PVC; no database provisioning or indexes
+  are needed.
 
 ## 7. Build & release pipeline (Cloud Build)
 
@@ -177,7 +177,7 @@ deploy on push instead of manual submits.
 - **Restrict operator surfaces**: Langflow and Dashboards are public in the POC; in
   production, put them on internal ingress or IP allow-list only. The OpenRAG UI is an
   operator tool — it searches the *whole* index; tenant isolation exists only in Khoj.
-- **Backups**: Firestore export schedule, GCS bucket versioning, OpenSearch snapshots to
+- **Backups**: snapshot the Khoj data PVC (it holds khoj.db + local originals), GCS bucket versioning (gcs backend only), OpenSearch snapshots to
   GCS. The OpenRAG backend PVC (workspace config) is small and critical — snapshot it too.
 - **Secret rotation**: `gcloud secrets versions add` + `kubectl rollout restart` of the
   consuming deployment (ESO refreshInterval also propagates within an hour).
@@ -194,5 +194,5 @@ deploy on push instead of manual submits.
 | Backend "forgets" config after restart | Workspace config on ephemeral disk | PVCs on `/app/keys`, `/app/config`, `/app/data` (§5.3) |
 | Onboarding wizard never completes (API-driven) | `onboarding.current_step` left at 0 | Set to final step in `openrag.db`, restart backend (§5) |
 | Langflow login/429 loops, flows locked (423) | Stored flows are locked upstream | Edit by delete + re-import; expect JWT expiry ~45 min |
-| Org/invite endpoints return 500 | Missing Firestore collection-group indexes | Create `members(uid)` + `invites(email)` indexes (§6) |
+| Chat returns 401 while the UI works | Web/agent signing secrets differ | Ensure both charts sync the same `khoj-auth-secret` GSM key |
 | Junk queries list the user's documents | kNN nearest-neighbour behaviour on small corpora | Relevance floor `KHOJ_MIN_SCORE` (§6); re-measure as corpora grow |

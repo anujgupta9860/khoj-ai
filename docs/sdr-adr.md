@@ -229,3 +229,24 @@ project/org level; the OpenAI route later became primary.
 complete sections) as the automatic fallback when the model call fails or no key is set.
 **Consequences:** Chat degrades gracefully instead of erroring; fallback answers obey the
 same corpus boundary because they read only the scope's GCS objects.
+
+## ADR-013: Remove Firebase and GCP data services; built-in auth + SQLite + pluggable originals storage
+**Context:** Firebase Auth, Firestore and GCS made every deployment — including a
+simple local or docker run — depend on a GCP project, ADC credentials and Workload
+Identity, and the browser-side Firebase SDK kept breaking sign-in inside in-app
+browser sheets. The user directed cutting GCP dependency as much as possible.
+**Decision:** Auth is built into the web service (email/password accounts with
+PBKDF2 hashes in SQLite; sessions are app-issued HS256 JWTs signed with a shared
+secret — app/auth.py, stdlib only). All metadata (users, orgs, members, invites,
+uploads, activity log) lives in one SQLite file (SqliteOrgService, same interface
+as the Firestore one it replaces). Uploaded originals go through a storage
+abstraction (app/storage.py): KHOJ_STORAGE=local (disk, default) or =gcs (bucket,
+same object keys) — the deployer chooses. The A2A agent holds no data credentials:
+it verifies tokens locally and asks the web service for the caller's corpus
+(GET /api/agent/corpus) and document originals (GET /api/documents/{id}/raw).
+**Consequences:** Khoj runs anywhere Docker/processes run with zero Google
+libraries on the default path; GKE becomes a hosting choice, not a dependency.
+Existing Firestore accounts/data do not migrate — a deployment of this version
+starts with fresh accounts (super admin bootstraps from KHOJ_SUPER_ADMIN_EMAIL)
+and re-uploaded documents. The one remaining GCP coupling is optional: the gcs
+storage backend, plus GSM as the secret store for the GKE deployment.

@@ -10,15 +10,18 @@ Roles: admin (enroller; branding, invitations, uploads, members) and
 member (search the business corpus). An org must always keep at least
 one admin.
 
-Firestore layout:
-  orgs/{orgId}                    {name, slug, createdBy, branding{...}}
-  orgs/{orgId}/members/{uid}      {uid, email, role}
-  orgs/{orgId}/invites/{inviteId}  {email, role, invitedBy, status,
-                                    secretHash}
+Storage: SQLite (SqliteOrgService below) — orgs, members, invites,
+uploads and events tables in <KHOJ_DATA_DIR>/khoj.db. Records cross the
+service boundary as the same dicts the old Firestore layout used:
+  orgs        {name, slug, createdBy, branding{...}, status}
+  members     {uid, email, role}
+  invites     {email, role, invitedBy, status, secretHash}
 """
 
+import json
 import re
 import time
+import uuid
 
 ROLES = ("admin", "member")
 UPLOAD_ROLES = ("admin",)
@@ -34,30 +37,66 @@ def slugify(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "org"
 
 
-class FirestoreOrgService:
-    def __init__(self, db):
-        self.db = db
+class SqliteOrgService:
+    """The org service on SQLite (app/db.py). Same interface the
+    Firestore implementation had; records are JSON documents in typed
+    tables so the dict shapes crossing the API never change."""
 
-    def _org(self, org_id):
-        return self.db.collection("orgs").document(org_id)
+    def __init__(self, connect):
+        self._connect = connect
+        with self._connect() as conn:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS orgs (
+                    org_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS members (
+                    org_id TEXT NOT NULL, uid TEXT NOT NULL, data TEXT NOT NULL,
+                    PRIMARY KEY (org_id, uid));
+                CREATE TABLE IF NOT EXISTS invites (
+                    org_id TEXT NOT NULL, invite_id TEXT NOT NULL,
+                    data TEXT NOT NULL, PRIMARY KEY (org_id, invite_id));
+                CREATE TABLE IF NOT EXISTS uploads (
+                    doc_id TEXT PRIMARY KEY, scope_key TEXT NOT NULL,
+                    data TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,
+                    data TEXT NOT NULL);
+                """
+            )
 
     # -- orgs ------------------------------------------------------------
+    def _org_row(self, conn, org_id):
+        row = conn.execute(
+            "SELECT data FROM orgs WHERE org_id = ?", (org_id,)
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
     def create_org(self, name: str, owner: dict) -> dict:
-        ref = self.db.collection("orgs").document()
-        slug = f"{slugify(name)}-{ref.id[:6].lower()}"
-        ref.set({"name": name, "slug": slug, "createdBy": owner["uid"],
-                 "branding": {}, "status": "pending"})
-        ref.collection("members").document(owner["uid"]).set(
-            {"uid": owner["uid"], "email": owner.get("email", ""), "role": "admin"}
-        )
-        return {"id": ref.id, "name": name, "slug": slug, "role": "admin",
+        org_id = uuid.uuid4().hex[:20]
+        slug = f"{slugify(name)}-{org_id[:6].lower()}"
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO orgs (org_id, data) VALUES (?, ?)",
+                (org_id, json.dumps({
+                    "name": name, "slug": slug, "createdBy": owner["uid"],
+                    "branding": {}, "status": "pending",
+                })),
+            )
+            conn.execute(
+                "INSERT INTO members (org_id, uid, data) VALUES (?, ?, ?)",
+                (org_id, owner["uid"], json.dumps({
+                    "uid": owner["uid"], "email": owner.get("email", ""),
+                    "role": "admin",
+                })),
+            )
+        return {"id": org_id, "name": name, "slug": slug, "role": "admin",
                 "branding": {}, "status": "pending"}
 
     def get_org(self, org_id: str):
-        snap = self._org(org_id).get()
-        if not snap.exists:
+        with self._connect() as conn:
+            d = self._org_row(conn, org_id)
+        if d is None:
             return None
-        d = snap.to_dict()
         return {
             "id": org_id,
             "name": d.get("name", ""),
@@ -68,132 +107,207 @@ class FirestoreOrgService:
         }
 
     def get_org_by_slug(self, slug: str):
-        hits = self.db.collection("orgs").where("slug", "==", slug).limit(1).get()
-        return self.get_org(hits[0].id) if hits else None
+        with self._connect() as conn:
+            rows = conn.execute("SELECT org_id, data FROM orgs").fetchall()
+        for org_id, raw in rows:
+            if json.loads(raw).get("slug") == slug:
+                return self.get_org(org_id)
+        return None
 
     def set_branding(self, org_id: str, branding: dict) -> dict:
-        self._org(org_id).update({"branding": branding})
+        with self._connect() as conn:
+            d = self._org_row(conn, org_id) or {}
+            d["branding"] = branding
+            conn.execute(
+                "UPDATE orgs SET data = ? WHERE org_id = ?",
+                (json.dumps(d), org_id),
+            )
         return branding
 
     # -- members -----------------------------------------------------------
     def membership(self, uid: str, org_id: str):
-        snap = self._org(org_id).collection("members").document(uid).get()
-        return snap.to_dict().get("role") if snap.exists else None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT data FROM members WHERE org_id = ? AND uid = ?",
+                (org_id, uid),
+            ).fetchone()
+        return json.loads(row[0]).get("role") if row else None
 
     def list_orgs_for_user(self, uid: str) -> list:
         out = []
-        query = self.db.collection_group("members").where("uid", "==", uid)
-        for doc in query.stream():
-            org = self.get_org(doc.reference.parent.parent.id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT org_id, data FROM members WHERE uid = ?", (uid,)
+            ).fetchall()
+        for org_id, raw in rows:
+            org = self.get_org(org_id)
             if org:
-                out.append({**org, "role": doc.to_dict().get("role", "member")})
+                out.append({**org, "role": json.loads(raw).get("role", "member")})
         return out
 
     def list_members(self, org_id: str) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT uid, data FROM members WHERE org_id = ?", (org_id,)
+            ).fetchall()
         return [
-            {"uid": d.id, **{k: d.to_dict().get(k, "") for k in ("email", "role")}}
-            for d in self._org(org_id).collection("members").stream()
+            {"uid": uid, **{k: json.loads(raw).get(k, "") for k in ("email", "role")}}
+            for uid, raw in rows
         ]
 
     def add_member(self, org_id: str, target: dict, role: str = "member") -> dict:
-        self._org(org_id).collection("members").document(target["uid"]).set(
-            {"uid": target["uid"], "email": target.get("email", ""), "role": role}
-        )
-        return {"uid": target["uid"], "email": target.get("email", ""), "role": role}
+        member = {"uid": target["uid"], "email": target.get("email", ""), "role": role}
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO members (org_id, uid, data) VALUES (?, ?, ?)",
+                (org_id, target["uid"], json.dumps(member)),
+            )
+        return member
 
     def remove_member(self, org_id: str, uid: str) -> None:
-        self._org(org_id).collection("members").document(uid).delete()
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM members WHERE org_id = ? AND uid = ?", (org_id, uid)
+            )
 
     # -- platform / status / events -----------------------------------------
     def ensure_platform_org(self, owner: dict) -> dict:
-        ref = self._org(PLATFORM_ORG_ID)
-        if not ref.get().exists:
-            ref.set({"name": "Khoj.ai", "slug": "khoj", "createdBy": owner["uid"],
-                     "branding": {}, "status": "approved"})
-        ref.collection("members").document(owner["uid"]).set(
-            {"uid": owner["uid"], "email": owner.get("email", ""), "role": "admin"}
-        )
+        with self._connect() as conn:
+            if self._org_row(conn, PLATFORM_ORG_ID) is None:
+                conn.execute(
+                    "INSERT INTO orgs (org_id, data) VALUES (?, ?)",
+                    (PLATFORM_ORG_ID, json.dumps({
+                        "name": "Khoj.ai", "slug": "khoj",
+                        "createdBy": owner["uid"], "branding": {},
+                        "status": "approved",
+                    })),
+                )
+            conn.execute(
+                "INSERT OR REPLACE INTO members (org_id, uid, data) VALUES (?, ?, ?)",
+                (PLATFORM_ORG_ID, owner["uid"], json.dumps({
+                    "uid": owner["uid"], "email": owner.get("email", ""),
+                    "role": "admin",
+                })),
+            )
         return self.get_org(PLATFORM_ORG_ID)
 
     def list_orgs_by_status(self, status: str) -> list:
         out = []
-        for snap in self.db.collection("orgs").stream():
-            org = self.get_org(snap.id)
+        with self._connect() as conn:
+            rows = conn.execute("SELECT org_id FROM orgs").fetchall()
+        for (org_id,) in rows:
+            org = self.get_org(org_id)
             if org and org["status"] == status:
                 out.append(org)
         return out
 
     def set_org_status(self, org_id: str, status: str) -> None:
-        self._org(org_id).update({"status": status})
+        with self._connect() as conn:
+            d = self._org_row(conn, org_id) or {}
+            d["status"] = status
+            conn.execute(
+                "UPDATE orgs SET data = ? WHERE org_id = ?",
+                (json.dumps(d), org_id),
+            )
 
     def log_event(self, entry: dict) -> None:
         doc = dict(entry)
         doc.setdefault("ts", time.time())
-        self.db.collection("search_logs").add(doc)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO events (ts, data) VALUES (?, ?)",
+                (float(doc["ts"]), json.dumps(doc)),
+            )
 
     def list_events(self, limit: int = 200) -> list:
-        snaps = (
-            self.db.collection("search_logs")
-            .order_by("ts", direction="DESCENDING")
-            .limit(limit)
-            .get()
-        )
-        return [s.to_dict() for s in snaps]
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT data FROM events ORDER BY ts DESC, id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [json.loads(r[0]) for r in rows]
 
     # -- file uploads (ingestion status tracking) ---------------------------
     def record_upload(self, rec: dict) -> None:
-        self.db.collection("file_uploads").document(rec["docId"]).set(rec)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO uploads (doc_id, scope_key, data)"
+                " VALUES (?, ?, ?)",
+                (rec["docId"], rec.get("scopeKey", ""), json.dumps(rec)),
+            )
 
     def list_uploads(self, scope_key: str) -> list:
-        snaps = (
-            self.db.collection("file_uploads")
-            .where("scopeKey", "==", scope_key)
-            .get()
-        )
-        return [s.to_dict() for s in snaps]
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT data FROM uploads WHERE scope_key = ?", (scope_key,)
+            ).fetchall()
+        return [json.loads(r[0]) for r in rows]
 
     def list_all_uploads(self, limit: int = 1000) -> list:
-        snaps = self.db.collection("file_uploads").limit(limit).get()
-        return [s.to_dict() for s in snaps]
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT data FROM uploads LIMIT ?", (limit,)
+            ).fetchall()
+        return [json.loads(r[0]) for r in rows]
 
     # -- invites -----------------------------------------------------------
     def create_invite(self, org_id: str, email: str, role: str, invited_by: str, secret_hash: str) -> dict:
-        ref = self._org(org_id).collection("invites").document()
+        invite_id = uuid.uuid4().hex[:20]
         data = {
-            "email": email,
-            "role": role,
-            "invitedBy": invited_by,
-            "status": "pending",
-            "secretHash": secret_hash,
+            "email": email, "role": role, "invitedBy": invited_by,
+            "status": "pending", "secretHash": secret_hash,
         }
-        ref.set(data)
-        return {"id": ref.id, **data}
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO invites (org_id, invite_id, data) VALUES (?, ?, ?)",
+                (org_id, invite_id, json.dumps(data)),
+            )
+        return {"id": invite_id, **data}
 
     def get_invite(self, org_id: str, invite_id: str):
-        snap = self._org(org_id).collection("invites").document(invite_id).get()
-        return {"id": invite_id, **snap.to_dict()} if snap.exists else None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT data FROM invites WHERE org_id = ? AND invite_id = ?",
+                (org_id, invite_id),
+            ).fetchone()
+        return {"id": invite_id, **json.loads(row[0])} if row else None
 
     def list_invites(self, org_id: str) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT invite_id, data FROM invites WHERE org_id = ?", (org_id,)
+            ).fetchall()
         return [
-            {"id": d.id, **{k: d.to_dict().get(k, "") for k in ("email", "role", "status", "invitedBy")}}
-            for d in self._org(org_id).collection("invites").stream()
+            {"id": iid, **{k: json.loads(raw).get(k, "") for k in ("email", "role", "status", "invitedBy")}}
+            for iid, raw in rows
         ]
 
     def set_invite_status(self, org_id: str, invite_id: str, status: str) -> None:
-        self._org(org_id).collection("invites").document(invite_id).update({"status": status})
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT data FROM invites WHERE org_id = ? AND invite_id = ?",
+                (org_id, invite_id),
+            ).fetchone()
+            if row:
+                d = json.loads(row[0])
+                d["status"] = status
+                conn.execute(
+                    "UPDATE invites SET data = ? WHERE org_id = ? AND invite_id = ?",
+                    (json.dumps(d), org_id, invite_id),
+                )
 
     def invites_for_email(self, email: str) -> list:
         out = []
-        query = self.db.collection_group("invites").where("email", "==", email)
-        for doc in query.stream():
-            data = doc.to_dict()
-            if data.get("status") != "pending":
+        with self._connect() as conn:
+            rows = conn.execute("SELECT org_id, invite_id, data FROM invites").fetchall()
+        for org_id, invite_id, raw in rows:
+            data = json.loads(raw)
+            if data.get("email") != email or data.get("status") != "pending":
                 continue
-            org_id = doc.reference.parent.parent.id
             org = self.get_org(org_id)
             out.append({
                 "orgId": org_id,
-                "inviteId": doc.id,
+                "inviteId": invite_id,
                 "orgName": org["name"] if org else "",
                 "role": data.get("role", "member"),
             })

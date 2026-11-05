@@ -1,3 +1,9 @@
+# Khoj locally with Docker: web + A2A agent on one shared data volume.
+#   cp .env.local.example .env.local   # or: bash scripts/start-local.sh --setup-only
+#   docker compose up --build
+# OpenRAG stays external - point OPENRAG_URL at a running instance
+# (local backend http://host.docker.internal:8000, or the GKE stack
+# through its app proxy http://34.102.202.103/api).
 services:
   khoj:
     build: .
@@ -6,8 +12,35 @@ services:
     ports:
       - "8081:8080"
     environment:
-      GCP_PROJECT: ${GCP_PROJECT}
-      KHOJ_BUCKET: ${KHOJ_BUCKET}
-      OPENRAG_URL: ${OPENRAG_URL:-http://openrag-backend:8000}
-      FIREBASE_API_KEY: ${FIREBASE_API_KEY}
-      FIREBASE_AUTH_DOMAIN: ${FIREBASE_AUTH_DOMAIN}
+      KHOJ_DATA_DIR: /data
+      KHOJ_STORAGE: ${KHOJ_STORAGE:-local}
+      KHOJ_BUCKET: ${KHOJ_BUCKET:-}
+      KHOJ_AUTH_SECRET: ${KHOJ_AUTH_SECRET:?set KHOJ_AUTH_SECRET in .env.local}
+      KHOJ_SUPER_ADMIN_EMAIL: ${KHOJ_SUPER_ADMIN_EMAIL:-}
+      OPENRAG_URL: ${OPENRAG_URL:-http://34.102.202.103/api}
+      KHOJ_AGENT_URL: http://khoj-agent
+      JIRA_BASE_URL: ${JIRA_BASE_URL:-}
+      JIRA_EMAIL: ${JIRA_EMAIL:-}
+      JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-}
+      JIRA_ISSUE_TYPE: ${JIRA_ISSUE_TYPE:-Task}
+      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
+    volumes:
+      - khoj-data:/data
+
+  khoj-agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    container_name: khoj-agent
+    restart: unless-stopped
+    environment:
+      KHOJ_WEB_URL: http://khoj:8080
+      KHOJ_AUTH_SECRET: ${KHOJ_AUTH_SECRET:?set KHOJ_AUTH_SECRET in .env.local}
+      OPENRAG_URL: ${OPENRAG_URL:-http://34.102.202.103/api}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+    depends_on:
+      - khoj
+
+volumes:
+  khoj-data:

@@ -269,7 +269,7 @@
         <p class="muted">Add Khoj as an MCP server in Claude, Cursor, or any MCP client and your agent can search your documents. Paste this config:</p>
         <pre id="mcpconfig" class="code"></pre>
         <button id="copymcp" class="secondary">Copy my MCP config</button>
-        <p class="muted">The token is your sign-in token and lasts about an hour — come back here for a fresh config when it expires.</p>
+        <p class="muted">The token is your sign-in token and lasts 7 days — come back here for a fresh config when it expires.</p>
       </div>
     </section>
 
@@ -298,14 +298,14 @@
 </div>
 
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-import {
-  getAuth, onAuthStateChanged, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, signOut
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+const $ = (id) => document.getElementById(id);
 
-const cfg = await (await fetch("/api/config")).json();
-const auth = getAuth(initializeApp(cfg));
+// Khoj built-in auth: the app issues its own token at login/register;
+// it lives in localStorage and rides as a Bearer header on API calls.
+let _token = localStorage.getItem("khoj_token") || null;
+let _email = localStorage.getItem("khoj_email") || "";
+
+async function token() { return _token; }
 
 // Branded sign-in (/?org=<slug>) + invite links (/?invite=<token>)
 {
@@ -327,7 +327,6 @@ const auth = getAuth(initializeApp(cfg));
     }
   }
 }
-const $ = (id) => document.getElementById(id);
 let signupMode = false;
 
 $("authtoggle").onclick = () => {
@@ -340,31 +339,50 @@ $("authtoggle").onclick = () => {
 $("authsubmit").onclick = async () => {
   $("autherr").textContent = "";
   try {
-    if (signupMode) await createUserWithEmailAndPassword(auth, $("email").value, $("password").value);
-    else await signInWithEmailAndPassword(auth, $("email").value, $("password").value);
+    const resp = await fetch(signupMode ? "/api/auth/register" : "/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: $("email").value.trim(), password: $("password").value }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || ("Sign-in failed (" + resp.status + ")"));
+    _token = data.token; _email = data.email || $("email").value.trim();
+    localStorage.setItem("khoj_token", _token);
+    localStorage.setItem("khoj_email", _email);
+    enterApp();
   } catch (e) { $("autherr").textContent = e.message; }
 };
-$("signout").onclick = () => signOut(auth);
+$("signout").onclick = () => {
+  _token = null; _email = "";
+  localStorage.removeItem("khoj_token");
+  localStorage.removeItem("khoj_email");
+  exitApp();
+};
 
-async function token() { return auth.currentUser ? auth.currentUser.getIdToken() : null; }
+function exitApp() {
+  $("authview").classList.remove("hidden");
+  $("searchview").classList.add("hidden");
+  $("userbox").classList.add("hidden");
+  $("chatfab").classList.add("hidden");
+  $("chatpanel").classList.remove("open");
+}
 
-onAuthStateChanged(auth, async (user) => {
-  const signedIn = !!user;
-  $("authview").classList.toggle("hidden", signedIn);
-  $("searchview").classList.toggle("hidden", !signedIn);
-  $("userbox").classList.toggle("hidden", !signedIn);
-  $("chatfab").classList.toggle("hidden", !signedIn);
-  if (!signedIn) $("chatpanel").classList.remove("open");
-  if (user) {
-    $("useremail").textContent = user.email;
-    renderMcpConfig();
-    await acceptStashedInvite();
-    await loadOrgs();
-    loadDocs();
-    loadInvitesInbox();
-    loadMe();
-  }
-});
+async function enterApp() {
+  if (!_token) { exitApp(); return; }
+  $("authview").classList.add("hidden");
+  $("searchview").classList.remove("hidden");
+  $("userbox").classList.remove("hidden");
+  $("chatfab").classList.remove("hidden");
+  $("useremail").textContent = _email;
+  renderMcpConfig();
+  await acceptStashedInvite();
+  await loadOrgs();
+  loadDocs();
+  loadInvitesInbox();
+  loadMe();
+}
+
+if (_token) enterApp();
 
 async function loadMe() {
   const resp = await api("/api/me");
@@ -492,7 +510,9 @@ function currentOrg() { return $("corpus").value || null; }
 function selectedOrgObj() { return myOrgs.find((o) => o.id === currentOrg()) || null; }
 
 async function api(path, options = {}) {
-  return fetch(path, { ...options, headers: { Authorization: "Bearer " + (await token()), ...(options.headers || {}) } });
+  const resp = await fetch(path, { ...options, headers: { Authorization: "Bearer " + (await token()), ...(options.headers || {}) } });
+  if (resp.status === 401 && _token) $("signout").click();  // expired token → back to sign-in
+  return resp;
 }
 
 async function loadOrgs() {

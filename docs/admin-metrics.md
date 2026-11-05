@@ -8,7 +8,7 @@ handlers); rendering in `app/static/index.html` (`loadAdmin`).*
 ## The one-line version
 
 Only **one OpenRAG API** feeds the whole page: **`GET /files`** (unprefixed,
-`http://openrag-backend:8000/files`). Everything else is Khoj's own Firestore records
+`http://openrag-backend:8000/files`). Everything else is Khoj's own records in SQLite (via the org service)
 (`file_uploads`, `search_logs`, `orgs`) plus arithmetic. No OpenRAG metrics, task, or
 stats endpoint is used — OpenRAG exposes none that fit.
 
@@ -17,9 +17,9 @@ stats endpoint is used — OpenRAG exposes none that fit.
 | Source | What it provides | How Khoj gets it |
 |---|---|---|
 | OpenRAG `GET /files` | Per file: `chunks` (chunk count), `indexed_time` (when indexing finished) | `_openrag_files()` — keyed by the scoped OpenRAG filename (`{doc_id}--{filename}`), cached 5 s |
-| Firestore `file_uploads` | Per upload: `docId`, `filename`, `uid`, `orgId`, `uploadedAt` (epoch s) | `org_service().list_all_uploads()` |
-| Firestore `search_logs` | Every search/chat/upload event: `kind`, `query`, `answer`, `results`, `latencyMs`, `source`, `ts`, `email`, `orgId` | `org_service().list_events(limit)` |
-| Firestore `orgs` | Org status counts (approved / pending / rejected) | `admin_metrics` |
+| SQLite `uploads` | Per upload: `docId`, `filename`, `uid`, `orgId`, `uploadedAt` (epoch s) | `org_service().list_all_uploads()` |
+| SQLite `events` | Every search/chat/upload event: `kind`, `query`, `answer`, `results`, `latencyMs`, `source`, `ts`, `email`, `orgId` | `org_service().list_events(limit)` |
+| SQLite `orgs` | Org status counts (approved / pending / rejected) | `admin_metrics` |
 
 ## The file matrix (Files — ingestion time & chunks)
 
@@ -35,7 +35,7 @@ Served by `GET /api/admin/file-stats`, grouped **global** (platform org) → **p
 | **Status** | `ready` if the file appears in `GET /files` at all; otherwise `indexing` |
 
 So "ingestion time" measures the full pipeline a user experiences — from the moment
-Khoj accepted the upload (GCS + Firestore write, then forwarding) until OpenRAG
+Khoj accepted the upload (original stored + record written, then forwarding) until OpenRAG
 finished converting, chunking, embedding and indexing it (Docling + Langflow + OpenAI
 embeddings + OpenSearch write all included).
 
@@ -72,7 +72,7 @@ web service and stored on the log event at write time:
 
 | Tile | Formula |
 |---|---|
-| Businesses approved / pending requests | Org counts by status (Firestore `orgs`) |
+| Businesses approved / pending requests | Org counts by status (SQLite `orgs`) |
 | Searches (all time) | Count of `kind="search"` events |
 | Files | Count of all entries across the file-stats groups |
 | Chunks total | Σ `chunks` over those files (from `GET /files`) |

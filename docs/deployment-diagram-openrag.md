@@ -37,7 +37,7 @@ flowchart TB
     subgraph Platform["GCP platform services"]
         GSM[("Google Secret Manager<br/>openai key · opensearch admin pw<br/>langflow superuser pw · session secret")]
         GCS[("GCS bucket<br/>khoj-ai-corpus-innovation-lab<br/>original uploaded files")]
-        FS[("Firestore<br/>orgs · uploads · logs")]
+        FS[("SQLite<br/>users · orgs · uploads · logs")]
         AR[("Artifact Registry<br/>container images")]
         CB["Cloud Build<br/>cloudbuild.yaml pipeline"]
     end

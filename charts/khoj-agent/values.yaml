@@ -5,9 +5,19 @@ image:
 
 replicaCount: 1
 
-gcp:
-  project: innovation-lab-2026
-  bucket: "khoj-ai-corpus-innovation-lab"
+# The web service owns accounts, corpora and stored originals. The
+# agent asks it (with the caller's token) for the authorized corpus
+# and document text - it holds no database or storage credentials.
+web:
+  url: "http://khoj"
+
+# Shared auth secret with the web service: both verify the same
+# app-issued tokens. Value comes from GSM via ExternalSecret.
+auth:
+  secretName: "khoj-agent-auth"
+  externalSecret:
+    enabled: true
+    gsmKey: "khoj-auth-secret"
 
 # OpenRAG: the single retrieval engine (in-cluster service)
 openrag:
@@ -23,11 +33,6 @@ openai:
   externalSecret:
     enabled: true
     gsmKey: "openrag-openai-api-key"
-
-workloadIdentity:
-  # Same app GSA as the web service (Firestore + Firebase Auth +
-  # storage reads on the corpus bucket for the extractive fallback)
-  gsaEmail: ""
 
 service:
   type: ClusterIP

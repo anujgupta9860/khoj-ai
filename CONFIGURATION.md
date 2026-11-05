@@ -12,49 +12,59 @@ stop and ask — never invent a secret value, and never commit one.
    gitignored `.env.local` (local runs). Config files may reference secret
    *names* only.
 2. This repo is **public**. Before committing, scan the diff for tokens,
-   keys, and passwords. (The Firebase web `apiKey` in
-   `charts/khoj/values.yaml` is a public client identifier, NOT a secret —
-   leave it alone.)
+   keys, and passwords.
 3. When verifying wiring, print secret/env **names only**, never values
    (`env | grep -o '^JIRA_[A-Z_]*'`, `kubectl get secret …` existence only).
 4. Config precedence: Helm values (GKE) → container env → app defaults.
    Locally: `.env.local` → shell env → app defaults.
-5. One change at a time, then re-verify with the checklist in §7.
+5. One change at a time, then re-verify with the checklist in §8.
 
 ## 1. System in one paragraph
 
 Khoj is a document-search product: a web app (FastAPI, `app/`) with a
-Firebase sign-in UI, an A2A chat agent (`agent/`, JSON-RPC
+built-in email/password sign-in, an A2A chat agent (`agent/`, JSON-RPC
 `message/send` + streaming), and **OpenRAG** as the only retrieval/
-indexing engine (six Helm charts in `charts/openrag-*`). State: uploads
-in a GCS bucket, metadata/memberships/logs in Firestore, document chunks
-in OpenRAG's OpenSearch. Live deployment: GKE Autopilot cluster `khoj`,
-project `innovation-lab-2026`, namespace `default`, site
-http://34.8.195.76, OpenRAG UI http://34.102.202.103.
+indexing engine (six Helm charts in `charts/openrag-*`). **No Firebase
+and no required cloud services** (ADR-013): accounts, orgs, memberships,
+invites, upload records and the activity log live in one SQLite file;
+uploaded originals live in a storage backend the deployer chooses —
+local disk (default) or a GCS bucket. The agent holds no data
+credentials: it verifies the caller's token locally and asks the web
+service for the authorized corpus and document text. Live deployment:
+GKE Autopilot cluster `khoj`, project `innovation-lab-2026`, namespace
+`default`, site http://34.8.195.76, OpenRAG UI http://34.102.202.103 —
+GKE is now just the current hosting choice.
 
 ## 2. Configuration surfaces
 
 | Surface | Where | Holds |
 |---|---|---|
 | Local env file | `.env.local` (gitignored), written by `scripts/start-local.sh` | Local runs: every env var below |
-| Web chart | `charts/khoj/values.yaml` | Project, bucket, OpenRAG/agent URLs, Firebase web config, **Jira block** |
-| Agent chart | `charts/khoj-agent/values.yaml` | Project, bucket, OpenRAG URL, model, OpenAI secret reference |
+| Web chart | `charts/khoj/values.yaml` | Data dir + PVC, **storage backend choice**, auth (super-admin email, secret reference), OpenRAG/agent URLs, **Jira block** |
+| Agent chart | `charts/khoj-agent/values.yaml` | Web service URL, OpenRAG URL, model, OpenAI + auth secret references |
 | OpenRAG charts | `charts/openrag-*/values.yaml` | Images, storage, service names |
-| GSM secrets | project `innovation-lab-2026` | All secret values; synced by External Secrets Operator (ClusterSecretStore `gcpsm`) into k8s Secrets |
-| Firestore | collections `orgs`, `users`, `file_uploads`, `search_logs` | Runtime **data**, not deploy config — never hand-edit except the documented super-admin bootstrap (`scripts/set_super_admin.py`) |
+| Data dir | `KHOJ_DATA_DIR` (PVC on GKE, folder locally) | `khoj.db` (SQLite: everything), `files/` (originals, local backend), `auth_secret` (only when `KHOJ_AUTH_SECRET` is unset) |
+| GSM secrets | project `innovation-lab-2026` | Secret values for the GKE deployment; synced by External Secrets Operator (ClusterSecretStore `gcpsm`) into k8s Secrets |
 
 ## 3. Environment variable reference
+
+### Shared
+
+| Var | Required | Default | Notes |
+|---|---|---|---|
+| `KHOJ_DATA_DIR` | no | `./data` (cwd-relative) | Web only (the agent is stateless). Holds `khoj.db` + `files/` |
+| `KHOJ_AUTH_SECRET` | recommended | auto-generated into `<data dir>/auth_secret` | Signs session tokens. **Web and agent MUST share the same value** — in GKE both sync the same GSM key; locally the start script generates one into `.env.local`. Without a shared secret, chat calls fail 401 |
+| `KHOJ_TOKEN_TTL_HOURS` | no | `168` (7 days) | Session token lifetime |
+| `OPENRAG_URL` | no | `http://openrag-backend:8000` | **Unprefixed** backend routes (`/search`, `/files`, …); see ADR 010 |
 
 ### Web app (`app/main.py`)
 
 | Var | Required | Default | Set from (Helm) | Notes |
 |---|---|---|---|---|
-| `GCP_PROJECT` | yes | — | `gcp.project` | Firestore + Firebase project |
-| `KHOJ_BUCKET` | yes | — | `gcp.bucket` | GCS originals bucket |
-| `OPENRAG_URL` | no | `http://openrag-backend:8000` | `openrag.url` | **Unprefixed** backend routes (`/search`, `/files`, …); see ADR 010 |
-| `KHOJ_AGENT_URL` | no | `http://khoj-agent` | `agent.url` | A2A agent base URL (no port = 80 via its Service) |
-| `FIREBASE_API_KEY` | no | built-in fallback | `firebase.apiKey` | Public web identifier |
-| `FIREBASE_AUTH_DOMAIN` | no | `<project>.firebaseapp.com` | `firebase.authDomain` | Public |
+| `KHOJ_STORAGE` | no | `local` | `storage.backend` | `local` = originals on disk under `<data dir>/files`; `gcs` = originals in `KHOJ_BUCKET`. Same object keys either way (`users/<uid>/…`, `orgs/<orgId>/…`) |
+| `KHOJ_BUCKET` | gcs only | — | `storage.bucket` | Only read when `KHOJ_STORAGE=gcs`; that mode also needs Google credentials (Workload Identity on GKE) |
+| `KHOJ_SUPER_ADMIN_EMAIL` | no | unset | `auth.superAdminEmail` | Comma-separated. Accounts with these emails become platform super admins at register/login (seeded as platform-org admins) |
+| `KHOJ_AGENT_URL` | no | `http://khoj-agent` | `agent.url` | A2A agent base URL |
 | `KHOJ_MIN_SCORE` | no | `1.5` | — (not in values yet) | Relevance floor: search chunks below this score are dropped (ADR 007). To change in GKE, add an env entry in `charts/khoj/templates/deployment.yaml` |
 | `JIRA_BASE_URL` | Jira only | unset = off | `jira.baseUrl` | e.g. `https://khoj.atlassian.net` |
 | `JIRA_EMAIL` | Jira only | unset | `jira.email` | Atlassian account email for Basic auth |
@@ -62,36 +72,31 @@ http://34.8.195.76, OpenRAG UI http://34.102.202.103.
 | `JIRA_ISSUE_TYPE` | no | `Task` | `jira.issueType` | Must exist in the project's issue-type scheme |
 | `JIRA_API_TOKEN` | Jira only | unset | secretKeyRef ← k8s Secret `jira.secretName` (default `khoj-jira`) ← GSM `jira.externalSecret.gsmKey` (default `khoj-jira-api-token`) | **Value never in values.yaml**; the pod reference is `optional: true` so the app runs with Jira off until the secret exists |
 
-Feature check at runtime: `GET /api/jira/status` (authenticated) returns
-`{enabled, projectKey, baseUrl}`. Ticket creation: `POST /api/jira/ticket`
-with `{question, answer, orgId?}`.
+Auth endpoints: `POST /api/auth/register` and `POST /api/auth/login`
+(JSON `{email, password}` → `{token, email, uid}`; passwords ≥ 8 chars,
+stored PBKDF2-hashed). Feature check: `GET /api/jira/status`
+(authenticated) returns `{enabled, projectKey, baseUrl}`. Ticket
+creation: `POST /api/jira/ticket` with `{question, answer, orgId?}`.
 
 ### Chat agent (`agent/main.py`)
 
 | Var | Required | Default | Set from (Helm) | Notes |
 |---|---|---|---|---|
-| `GCP_PROJECT` | no | `innovation-lab-2026` | values | |
-| `KHOJ_BUCKET` | no | `khoj-ai-corpus-innovation-lab` | values | Read-only use (full-text handoff) |
-| `OPENRAG_URL` | no | `http://openrag-backend:8000` | values | Same unprefixed routes |
+| `KHOJ_WEB_URL` | no | `http://khoj` | `web.url` | The web service. The agent fetches the caller's corpus (`GET /api/agent/corpus`) and document originals (`GET /api/documents/{id}/raw`) from it, forwarding the caller's token — authorization is enforced by the web service on every call |
 | `OPENAI_API_KEY` | no | unset | secret `khoj-agent-openai` ← GSM `openrag-openai-api-key` | Unset → agent answers extractively (no LLM) |
 | `OPENAI_MODEL` | no | `gpt-4o-mini` | values | Keep equal to OpenRAG's configured agent model for output parity |
 | `PORT` | no | `8080` | chart | Listen port |
-
-Both services call `firebase_admin.initialize_app()` with Application
-Default Credentials — in GKE that is Workload Identity (GSA
-`khoj-app@innovation-lab-2026.iam.gserviceaccount.com`, bound to service
-accounts `default/khoj` and `default/khoj-agent`); locally it is the
-user's `gcloud` ADC or `GOOGLE_APPLICATION_CREDENTIALS`.
 
 ## 4. Secrets inventory (Google Secret Manager → cluster)
 
 | GSM secret | Consumed by | k8s Secret | Rotate by |
 |---|---|---|---|
+| `khoj-auth-secret` | Khoj web **and** agent (`KHOJ_AUTH_SECRET`) | `khoj-auth`, `khoj-agent-auth` | add new GSM version; ESO syncs ≤1h; rollout restart both deployments. All existing sessions invalidate |
 | `openrag-openai-api-key` | OpenRAG backend **and** Khoj agent | `openrag-secrets`, `khoj-agent-openai` | add new GSM version; ESO syncs ≤1h (or annotate the ExternalSecret to refresh now) |
+| `khoj-jira-api-token` | Khoj web (`JIRA_API_TOKEN`) | `khoj-jira` | new version; rollout restart `deploy/khoj` if the pod predates the secret |
 | `openrag-opensearch-admin-password` | OpenSearch + backend | `opensearch-secrets`, `openrag-secrets` | new version + restart OpenSearch StatefulSet and backend |
 | `openrag-langflow-superuser-password` | Backend (Langflow login) | `openrag-secrets` | new version + restart backend |
 | `openrag-session-secret` | Backend sessions | `openrag-secrets` | new version + restart backend |
-| `khoj-jira-api-token` | Khoj web (`JIRA_API_TOKEN`) | `khoj-jira` | new version; rollout restart `deploy/khoj` if the pod predates the secret |
 
 ## 5. Procedure A — run everything locally
 
@@ -100,22 +105,31 @@ bash scripts/start-local.sh        # asks all config, writes .env.local,
                                    # builds .venv-local, starts web+agent
 bash scripts/start-local.sh --setup-only   # config only
 bash scripts/start-local.sh --yes          # reuse .env.local, no prompts
+docker compose up --build          # alternative: containers, one volume
 ```
 
-Manual equivalent (only if the script cannot be used): export the §3
-variables, `pip install -r requirements.txt -r agent/requirements.txt`,
-then `uvicorn app.main:app --port 8080` and
-`PYTHONPATH=. uvicorn --app-dir agent main:app --port 8090`, with
-`KHOJ_AGENT_URL=http://localhost:8090`. OpenRAG is external — point
-`OPENRAG_URL` at a local backend (`http://localhost:8000`) or the GKE
-stack through its app proxy (`http://34.102.202.103/api`). Details:
-`docs/local-run.md`.
+The script asks for: ports, data dir, **storage backend (local|gcs)**,
+super-admin email, signing secret (blank = generate), OpenRAG URL,
+OpenAI key/model, and the Jira block. First run: register on the
+sign-in page — the configured super-admin email becomes platform admin
+automatically. Manual equivalent and details: `docs/local-run.md`.
 
 ## 6. Procedure B — deploy to GKE
 
-Preferred: `gcloud builds submit --config cloudbuild.yaml
---substitutions=SHORT_SHA=$(git rev-parse --short HEAD)` — builds both
-images and helm-upgrades releases `khoj` and `khoj-agent` (waits 5m).
+Before the FIRST deploy of the post-ADR-013 version: create the GSM
+secret `khoj-auth-secret` (any long random value) in project
+`innovation-lab-2026`. Note the data reset: accounts/documents start
+fresh on the new PVC (Firestore data does not migrate); users
+re-register and re-upload.
+
+```bash
+gcloud builds submit --config cloudbuild.yaml \
+  --substitutions=SHORT_SHA=$(git rev-parse --short HEAD)
+```
+— builds both images and helm-upgrades releases `khoj` and
+`khoj-agent` (waits 5m). The web chart creates the `khoj-data` PVC;
+with default values the storage backend is `local` and no Workload
+Identity binding is needed.
 
 OpenRAG charts are upgraded manually, in this order, only when their
 values/images change:
@@ -145,30 +159,36 @@ connected; builds are submitted manually as above.
 ## 8. Verification checklist
 
 ```bash
-curl -s http://34.8.195.76/api/config                 # Firebase config JSON
+curl -s http://34.8.195.76/api/config                 # {"auth":"khoj","storage":"local"}
 curl -s http://34.102.202.103/api/users/me            # roles incl. admin
 curl -s http://<agent>/.well-known/agent-card.json    # agent card
 kubectl rollout status deployment/khoj deployment/khoj-agent
 kubectl get externalsecret            # all SecretSynced / Ready=True
+kubectl get pvc khoj-data             # Bound
 kubectl exec deploy/khoj -- sh -c 'env | grep -o "^JIRA_[A-Z_]*" | sort'
-# End-to-end: sign in, upload a small file, search it, ask in chat,
+# End-to-end: register, upload a small file, search it, ask in chat,
 # confirm the 🎫 button creates a ticket in the configured project.
+# Local equivalents: python tests/test_app_local.py,
+# python agent/test_agent_local.py, python tests/test_sqlite_stack.py
 ```
 
 ## 9. Troubleshooting map
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| Chat fails 401 while search works | web and agent have different `KHOJ_AUTH_SECRET` | sync the same GSM key into both charts (§4); locally, one `.env.local` drives both |
+| Sign-in fails locally | stale token after the secret changed | sign out/in again; tokens invalidate when the secret rotates |
 | Chat nav/button missing in OpenRAG UI | browser session failed the `/api/users/me` fetch (permissions resolve empty) | open the site in a real browser (not an in-app sheet), hard refresh |
 | Search returns junk/empty for unrelated queries | relevance floor | `KHOJ_MIN_SCORE` (§3) — genuine hits score ≥ ~1.65, junk ~1.25–1.29 |
 | 🎫 button never appears | `/api/jira/status` says disabled | a `JIRA_*` value empty, or the `khoj-jira` secret not synced yet (§7 step 5) |
 | Ticket creation 502 | Jira rejected the request (bad project key/issue type/token) | re-check §3 Jira row; verify with `GET /rest/api/3/myself` |
-| Pods pending after values change | ESO/GSM name mismatch | ExternalSecret status shows the failing remote key |
-| Sign-in fails locally | no Google credentials | `gcloud auth application-default login` or set the key path in `.env.local` |
+| Uploads fail with storage errors (gcs mode) | `KHOJ_STORAGE=gcs` without bucket/credentials | set `storage.bucket` and the Workload Identity GSA, or switch to `local` |
+| Pods pending after values change | ESO/GSM name mismatch, or PVC unbound | ExternalSecret status shows the failing remote key; `kubectl describe pvc khoj-data` |
 
 ## 10. Decisions behind this configuration
 
-`docs/sdr-adr.md` (ADRs 001–012) and `docs/openrag-api-usage.md` explain
+`docs/sdr-adr.md` (ADRs 001–013) and `docs/openrag-api-usage.md` explain
 why: single OpenRAG engine, unprefixed routes, filename-convention
-isolation, relevance floor, secrets via ESO ← GSM. Read them before
-proposing structural changes.
+isolation, relevance floor, secrets via ESO ← GSM, and ADR-013 (no
+Firebase; built-in auth; SQLite; pluggable originals storage). Read
+them before proposing structural changes.

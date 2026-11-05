@@ -20,10 +20,10 @@ bash scripts/start-local.sh
 ## What you need
 
 - Python 3.10+.
-- Google credentials for Firestore / GCS / Firebase Auth: either
-  `gcloud auth application-default login`, or a service-account key
-  path (the script asks). Without them the UI loads but sign-in and
-  data calls fail.
+- No accounts or credentials to prepare: auth is built in and all
+  data lives in the data dir you choose. Only if you pick
+  `KHOJ_STORAGE=gcs` do you need Google credentials (gcloud ADC or a
+  service-account key) for the originals bucket.
 - A running OpenRAG to point `OPENRAG_URL` at — a local backend
   (`http://localhost:8000`, e.g. the openrag-gemma-local stack) or the
   deployed GKE stack through its app proxy

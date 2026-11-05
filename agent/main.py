@@ -2,11 +2,13 @@
 
 Implements the A2A protocol (JSON-RPC 2.0): an AgentCard at
 /.well-known/agent-card.json and message/send (+ message/stream) on the
-root endpoint. Each request carries the caller's Firebase ID token as a
-Bearer credential; the agent verifies it, searches ONLY that caller's
-corpus (or a business corpus they belong to, via message metadata
-orgId) in OpenRAG (the single retrieval engine), and grounds an
-LLM answer on the retrieved chunks.
+root endpoint. Each request carries the caller's Khoj token as a
+Bearer credential; the agent verifies it locally (shared secret,
+app/auth.py), asks the web service for the caller's authorized corpus
+(/api/agent/corpus — the web service enforces membership), searches
+ONLY that corpus in OpenRAG (the single retrieval engine), and grounds
+an LLM answer on the retrieved chunks. The agent holds no database or
+storage credentials of its own.
 
 This is the conversational surface for Khoj: the web app's chat panel
 talks to this service as an A2A client, and any external A2A client can
@@ -31,19 +33,16 @@ def clean_snippet(text: str) -> str:
     entities (&nbsp;). Strip both so answers read as plain prose."""
     return " ".join(html.unescape(_TAG_RE.sub(" ", text or "")).split())
 
-import firebase_admin
 import requests
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from firebase_admin import auth as fb_auth
-from firebase_admin import firestore as fb_firestore
-from google.auth import default as google_auth_default
-from google.auth.transport.requests import Request as GoogleAuthRequest
 
-from app.orgs import PLATFORM_ORG_ID, FirestoreOrgService
+from app.auth import verify_token
 
-PROJECT = os.environ.get("GCP_PROJECT", "innovation-lab-2026")
-BUCKET = os.environ.get("KHOJ_BUCKET", "khoj-ai-corpus-innovation-lab")
+# The web service owns accounts, corpora and stored originals; this
+# agent asks it (with the caller's own token) instead of holding
+# database/storage credentials.
+WEB_URL = os.environ.get("KHOJ_WEB_URL", "http://khoj").rstrip("/")
 # OpenRAG is the single retrieval engine (in-cluster service).
 OPENRAG_URL = os.environ.get("OPENRAG_URL", "http://openrag-backend:8000")
 # NOTE: the OpenRAG backend serves UNPREFIXED routes (/search, /files,
@@ -58,57 +57,20 @@ OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
 PUBLIC_URL = os.environ.get("AGENT_PUBLIC_URL", "")
 
-try:
-    firebase_admin.get_app()
-except ValueError:
-    firebase_admin.initialize_app()
-
 app = FastAPI(title="Khoj A2A Agent")
 
-_org_service = None
 _history: dict[str, list] = {}  # contextId -> [{q, a}] (POC-scale, in-memory)
-_creds = None
-
-
-def org_service() -> FirestoreOrgService:
-    global _org_service
-    if _org_service is None:
-        _org_service = FirestoreOrgService(fb_firestore.client())
-    return _org_service
-
-
-def gcp_token() -> str:
-    global _creds
-    if _creds is None:
-        _creds, _ = google_auth_default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-    if not _creds.valid:
-        _creds.refresh(GoogleAuthRequest())
-    return _creds.token
 
 
 def require_user(authorization: str | None) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
-        raise PermissionError("Missing ID token")
-    decoded = fb_auth.verify_id_token(authorization.split(" ", 1)[1])
-    return {"uid": decoded["uid"], "email": decoded.get("email", "")}
-
-
-def authorize_scope(user: dict, org_id: str | None) -> tuple:
-    """Membership/approval gate for business corpora; returns the
-    (Firestore scope key, GCS scope prefix) pair for this caller.
-    Corpus isolation is enforced by filtering OpenRAG to exactly the
-    scope's document names (see search_snippets)."""
-    if org_id:
-        svc = org_service()
-        if svc.membership(user["uid"], org_id) is None:
-            raise PermissionError("Not a member of this business")
-        org = svc.get_org(org_id)
-        if org and org.get("status") != "approved":
-            raise PermissionError("This business is pending approval")
-        return f"org:{org_id}", f"orgs/{org_id}"
-    return f"user:{user['uid']}", f"users/{user['uid']}"
+        raise PermissionError("Missing token")
+    try:
+        user = verify_token(authorization.split(" ", 1)[1])
+    except Exception:
+        raise PermissionError("Invalid token")
+    user["_auth"] = authorization
+    return user
 
 
 def _openrag_chunks(query: str, filenames: list, limit: int = 30) -> list:
@@ -165,38 +127,38 @@ def rewrite_query(question: str, history: list) -> str | None:
 
 
 def _corpus_names(user: dict, org_id: str | None) -> dict:
-    """OpenRAG filename -> (display title, GCS scope prefix) for every
-    document the caller may search: their scope's uploads plus the
-    global corpus. This map IS the corpus boundary - retrieval code
-    post-filters every chunk against it."""
-    scope_key, scope_prefix = authorize_scope(user, org_id)
+    """OpenRAG filename -> (display title, storage scope prefix, docId)
+    for every document the caller may search: their scope's uploads
+    plus the global corpus. This map IS the corpus boundary - retrieval
+    code post-filters every chunk against it.
+
+    The list comes from the web service (GET /api/agent/corpus), which
+    enforces membership/approval itself; an authorization failure there
+    raises PermissionError here, exactly like the old direct checks."""
+    params = {"orgId": org_id} if org_id else {}
     try:
-        records = org_service().list_uploads(scope_key)
-    except Exception:
-        records = []
-    if org_id != PLATFORM_ORG_ID:
-        # The global corpus (platform org documents) is searchable by
-        # every caller, alongside - never instead of - their own.
-        try:
-            seen = {r.get("docId") for r in records}
-            for rec in org_service().list_uploads(f"org:{PLATFORM_ORG_ID}"):
-                if rec.get("docId") not in seen:
-                    records.append(rec)
-        except Exception:
-            pass
-    by_name = {}
-    for r in records:
-        if not (r.get("docId") and r.get("filename")):
-            continue
-        name = f"{r['docId']}--{r['filename']}"
-        # Global-corpus files live under the platform org's GCS prefix;
-        # the caller's own files under theirs (extractive fetch keys).
-        prefix = (
-            f"orgs/{PLATFORM_ORG_ID}"
-            if r.get("scopeKey") == f"org:{PLATFORM_ORG_ID}"
-            else scope_prefix
+        resp = requests.get(
+            f"{WEB_URL}/api/agent/corpus",
+            params=params,
+            headers={"Authorization": user.get("_auth", "")},
+            timeout=15,
         )
-        by_name[name] = (r["filename"], prefix)
+    except Exception:
+        return {}
+    if resp.status_code in (401, 403, 404):
+        try:
+            detail = resp.json().get("detail", "Not authorized for this corpus")
+        except Exception:
+            detail = "Not authorized for this corpus"
+        raise PermissionError(detail)
+    if resp.status_code != 200:
+        return {}
+    by_name = {}
+    for f in resp.json().get("files", []):
+        if f.get("openragName") and f.get("docId"):
+            by_name[f["openragName"]] = (
+                f.get("filename", ""), f.get("scope", ""), f["docId"],
+            )
     return by_name
 
 
@@ -216,9 +178,10 @@ def _tool_search(query: str, user: dict, org_id: str | None, full_text_seen: set
         text = clean_snippet(chunk.get("text", ""))
         if not text:
             continue
-        title, prefix = by_name[name]
+        title, prefix, doc_id = by_name[name]
         entry = grouped.setdefault(
-            name, {"title": title, "prefix": prefix, "snips": [], "score": 0}
+            name, {"title": title, "prefix": prefix, "docId": doc_id,
+                   "snips": [], "score": 0}
         )
         entry["score"] = max(entry["score"], chunk.get("score", 0))
         if len(entry["snips"]) < 6:
@@ -231,7 +194,7 @@ def _tool_search(query: str, user: dict, org_id: str | None, full_text_seen: set
         full = None
         if name not in full_text_seen:
             try:
-                full = fetch_document_text(entry["prefix"], entry["title"])
+                full = fetch_document_text(entry["docId"], entry["title"], user)
             except Exception:
                 full = None
             if full and len(full) <= 20000:
@@ -307,9 +270,10 @@ def search_snippets(queries: list, user: dict, org_id: str | None, page_size: in
                 merged[key] = (score, name, text)
     grouped: dict[str, dict] = {}
     for score, name, text in sorted(merged.values(), key=lambda v: -v[0]):
-        title, prefix = by_name[name]
+        title, prefix, doc_id = by_name[name]
         entry = grouped.setdefault(
-            name, {"title": title, "snippets": [], "scope": prefix, "_score": score}
+            name, {"title": title, "snippets": [], "scope": prefix,
+                   "docId": doc_id, "_score": score}
         )
         entry["_score"] = max(entry["_score"], score)
         if len(entry["snippets"]) < 8:
@@ -336,7 +300,7 @@ def search_snippets(queries: list, user: dict, org_id: str | None, page_size: in
     # whole text so it can cross-reference labels and values itself.
     for entry in out[:3]:
         try:
-            full = fetch_document_text(entry["scope"], entry["title"])
+            full = fetch_document_text(entry.get("docId", ""), entry["title"], user)
         except Exception:
             full = None
         if full and len(full) <= 20000:
@@ -418,24 +382,23 @@ def extract_text(filename: str, raw: bytes) -> str | None:
     return text
 
 
-def fetch_document_text(scope: str, filename: str) -> str | None:
-    """Read the caller's own uploaded file from the corpus bucket and
-    return its extracted text. The object layout ({scope}/{filename})
-    and bucket are the web service's upload contract; the agent's
-    Workload Identity carries storage access to that bucket. A small
-    in-process cache avoids refetching on every chat turn (a re-upload
-    under the same name is picked up on pod restart)."""
-    if not scope or not filename:
+def fetch_document_text(doc_id: str, filename: str, user: dict | None) -> str | None:
+    """Fetch one of the caller's documents (by docId) from the web
+    service and return its extracted text. The web service owns the
+    storage backend (local disk or GCS) and re-checks the caller's
+    access to this exact document, so the agent needs no storage
+    credentials. A small in-process cache avoids refetching on every
+    chat turn (a re-upload under the same name is picked up on pod
+    restart)."""
+    if not doc_id or not filename or not user:
         return None
-    cache_key = (scope, filename)
+    cache_key = doc_id
     if cache_key in _TEXT_CACHE:
         return _TEXT_CACHE[cache_key]
-    obj = urllib.parse.quote(f"{scope}/{filename}", safe="")
-    url = f"https://storage.googleapis.com/storage/v1/b/{BUCKET}/o/{obj}?alt=media"
     try:
         resp = requests.get(
-            url,
-            headers={"Authorization": f"Bearer {gcp_token()}"},
+            f"{WEB_URL}/api/documents/{urllib.parse.quote(doc_id, safe='')}/raw",
+            headers={"Authorization": user.get("_auth", "")},
             timeout=(5, 20),
         )
         if resp.status_code != 200 or len(resp.content) > 12_000_000:
@@ -528,7 +491,7 @@ def pick_passages(text: str, question: str, budget: int = 2400) -> tuple[str, in
     return "\n".join(chosen), best
 
 
-def extractive_answer(question: str, sources: list) -> str:
+def extractive_answer(question: str, sources: list, user: dict | None = None) -> str:
     """Complete extractive answer: retrieve the actual source files
     and quote the best full sections. Earlier version stitched the search engine's
     ~200-character snippets (first document only, max 600 chars), which
@@ -536,7 +499,7 @@ def extractive_answer(question: str, sources: list) -> str:
     uses snippets across sources if no file can be fetched/parsed."""
     candidates: list[tuple[int, int, str, str]] = []
     for index, source in enumerate(sources[:3]):
-        text = fetch_document_text(source.get("scope", ""), source.get("title", ""))
+        text = fetch_document_text(source.get("docId", ""), source.get("title", ""), user)
         if not text:
             continue
         passages, best = pick_passages(text, question)
@@ -597,7 +560,7 @@ def model_answer(question: str, sources: list, history: list,
             "Try different words, or upload the document that covers it."
         ), []
     if not OPENAI_API_KEY:
-        return extractive_answer(question, sources), []
+        return extractive_answer(question, sources, user), []
     excerpts = "\n\n".join(
         f"[{i + 1}] {s['title']}\n" + "\n".join(s["snippets"])
         for i, s in enumerate(sources)
@@ -683,7 +646,7 @@ def model_answer(question: str, sources: list, history: list,
         return text, extra_titles
     except Exception as e:
         print(f"model_answer: falling back to extractive mode: {e!r}", flush=True)
-    return extractive_answer(question, sources), []
+    return extractive_answer(question, sources, user), []
 
 
 AGENT_CARD = {
@@ -696,9 +659,9 @@ AGENT_CARD = {
     "defaultInputModes": ["text/plain"],
     "defaultOutputModes": ["text/plain"],
     "securitySchemes": {
-        "firebaseBearer": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
+        "khojBearer": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
     },
-    "security": [{"firebaseBearer": []}],
+    "security": [{"khojBearer": []}],
     "skills": [
         {
             "id": "answer-questions",
@@ -770,7 +733,7 @@ async def a2a(request: Request, authorization: str | None = Header(default=None)
     try:
         user = require_user(authorization)
     except Exception:
-        return JSONResponse(_rpc_error(req_id, -32001, "Unauthorized: valid Firebase ID token required"))
+        return JSONResponse(_rpc_error(req_id, -32001, "Unauthorized: valid Khoj token required"))
     if method == "message/send":
         try:
             result = _handle_message(body.get("params") or {}, user)

@@ -94,7 +94,6 @@ steps:
     args: [upgrade, --install, khoj-agent, ./charts/khoj-agent,
            --set, "image.repository=$_REPO/khoj-agent",
            --set, "image.tag=$SHORT_SHA",
-           --set, "workloadIdentity.gsaEmail=khoj-app@innovation-lab-2026.iam.gserviceaccount.com",
            --wait, --timeout, 5m]
 
 images:

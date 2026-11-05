@@ -12,7 +12,7 @@ OpenRAG has **one shared index** and no per-user security inside it. Khoj create
   and `scope` is `users/{uid}` for a personal corpus or `orgs/{orgId}` for a business corpus.
 - The same name can therefore never collide across users, and every chunk in the index
   carries its owner's scope inside its filename.
-- Khoj keeps the upload records (Firestore `file_uploads`: docId, filename, scope) and, for
+- Khoj keeps the upload records (SQLite `uploads`: docId, filename, scope) and, for
   every chat, builds the **exact set of OpenRAG names the caller is allowed to see** — their
   own scope's names **plus the global corpus** (documents of the platform org `khoj`, visible
   to everyone by design). Another org's names are never in the set.
@@ -37,7 +37,7 @@ flowchart TB
     MEMB -->|"no"| DENY["403 — chat never<br/>reaches retrieval"]
     MEMB -->|"yes"| ORGS["Org scope<br/>scopeKey = org:{orgId}<br/>GCS prefix orgs/{orgId}"]
 
-    PERS --> NAMES["Build the allowed-name set<br/>Firestore file_uploads for this scope<br/>+ file_uploads of platform org 'khoj' (global corpus)<br/>→ names = { docId--filename }"]
+    PERS --> NAMES["Build the allowed-name set<br/>SQLite uploads for this scope<br/>+ uploads of platform org 'khoj' (global corpus)<br/>→ names = { docId--filename }"]
     ORGS --> NAMES
 
     NAMES --> SEED["Seeded retrieval<br/>query rewrite + raw question<br/>POST /search to OpenRAG with<br/>filters.filename = the allowed set ONLY"]
@@ -56,7 +56,7 @@ flowchart TB
 
 1. **Scope resolution (before retrieval).** A chat request carries an optional `orgId`.
    Without one, the scope is the caller's personal corpus. With one, the agent checks org
-   membership in Firestore first — a non-member gets a 403 and no search ever runs.
+   membership in SQLite first — a non-member gets a 403 and no search ever runs.
 2. **Allowed-name set.** The agent reads the scope's upload records and the platform org's
    records and turns them into OpenRAG filenames. This set is the entire security boundary,
    computed fresh on every request (and again on every tool call).

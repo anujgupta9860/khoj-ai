@@ -10,11 +10,10 @@
 # creates .venv-local, installs dependencies, starts both services,
 # waits until they answer, and prints the URLs. Ctrl+C stops both.
 #
-# OpenRAG is NOT started by this script — point OPENRAG_URL at a running
-# OpenRAG (a local one, or the deployed GKE stack through its app proxy).
-# Firestore/GCS/Firebase Auth use your Google Application Default
-# Credentials (gcloud auth application-default login) or a service
-# account key you name below.
+# Khoj needs NO cloud account: accounts and metadata live in SQLite and
+# uploaded originals on local disk, under the data dir you choose.
+# Only OpenRAG is external — point OPENRAG_URL at a running OpenRAG
+# (a local one, or the deployed GKE stack through its app proxy).
 set -u
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
@@ -54,11 +53,13 @@ write_env() {
   umask 077
   cat > "$ENV_FILE" <<EOF
 # Khoj local config — written by scripts/start-local.sh. Do not commit.
-GCP_PROJECT=$GCP_PROJECT
+WEB_PORT=$WEB_PORT
+AGENT_PORT=$AGENT_PORT
+KHOJ_DATA_DIR=$KHOJ_DATA_DIR
+KHOJ_STORAGE=$KHOJ_STORAGE
 KHOJ_BUCKET=$KHOJ_BUCKET
-GOOGLE_APPLICATION_CREDENTIALS=$GOOGLE_APPLICATION_CREDENTIALS
-FIREBASE_API_KEY=$FIREBASE_API_KEY
-FIREBASE_AUTH_DOMAIN=$FIREBASE_AUTH_DOMAIN
+KHOJ_AUTH_SECRET=$KHOJ_AUTH_SECRET
+KHOJ_SUPER_ADMIN_EMAIL=$KHOJ_SUPER_ADMIN_EMAIL
 OPENRAG_URL=$OPENRAG_URL
 OPENAI_API_KEY=$OPENAI_API_KEY
 OPENAI_MODEL=$OPENAI_MODEL
@@ -67,8 +68,6 @@ JIRA_EMAIL=$JIRA_EMAIL
 JIRA_PROJECT_KEY=$JIRA_PROJECT_KEY
 JIRA_ISSUE_TYPE=$JIRA_ISSUE_TYPE
 JIRA_API_TOKEN=$JIRA_API_TOKEN
-WEB_PORT=$WEB_PORT
-AGENT_PORT=$AGENT_PORT
 EOF
   echo "Saved config to .env.local"
 }
@@ -79,12 +78,23 @@ setup_config() {
   echo
   ask WEB_PORT "Web port" "8080"
   ask AGENT_PORT "Agent port" "8090"
-  echo "-- Google Cloud (Firestore, storage, Firebase Auth) --"
-  ask GCP_PROJECT "GCP project" "innovation-lab-2026"
-  ask KHOJ_BUCKET "GCS bucket for uploaded files" "khoj-ai-corpus-innovation-lab"
-  ask GOOGLE_APPLICATION_CREDENTIALS "Service-account key path (blank = gcloud ADC)" ""
-  ask FIREBASE_API_KEY "Firebase web API key" "AIzaSyBGSa_UueOLFmml52cOpJZS2vKbVdzB7r4"
-  ask FIREBASE_AUTH_DOMAIN "Firebase auth domain" "innovation-lab-2026.firebaseapp.com"
+  echo "-- Khoj data (accounts, orgs, logs: SQLite; originals: storage) --"
+  ask KHOJ_DATA_DIR "Data directory" "$ROOT/data"
+  ask KHOJ_STORAGE "Originals storage: 'local' (disk) or 'gcs' (Google bucket)" "local"
+  KHOJ_BUCKET=""
+  if [ "$KHOJ_STORAGE" = "gcs" ]; then
+    ask KHOJ_BUCKET "GCS bucket for originals" "khoj-ai-corpus-innovation-lab"
+    echo "   (gcs mode uses your Google credentials: gcloud ADC or"
+    echo "    GOOGLE_APPLICATION_CREDENTIALS — set the latter in .env.local"
+    echo "    by hand if you use a key file.)"
+  fi
+  echo "-- Built-in auth --"
+  ask KHOJ_SUPER_ADMIN_EMAIL "Super-admin email (platform admin at sign-in)" "anuj.gupta9860@gmail.com"
+  ask_secret KHOJ_AUTH_SECRET "Token signing secret (blank = generate one)"
+  if [ -z "$KHOJ_AUTH_SECRET" ]; then
+    KHOJ_AUTH_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+    echo "   Generated a signing secret and saved it in .env.local."
+  fi
   echo "-- OpenRAG (retrieval engine; must already be running somewhere) --"
   echo "   Local OpenRAG backend:        http://localhost:8000"
   echo "   Deployed GKE stack (via app): http://34.102.202.103/api"
@@ -129,15 +139,8 @@ set -a
 . "$ENV_FILE"
 set +a
 export KHOJ_AGENT_URL="http://localhost:${AGENT_PORT}"
-
-# Credentials sanity: Firebase/Firestore/GCS need ADC or a key file.
-ADC_FILE="$HOME/.config/gcloud/application_default_credentials.json"
-if [ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ] && [ ! -f "$ADC_FILE" ]; then
-  echo "WARNING: no Google credentials found (no key path, no gcloud ADC)."
-  echo "         Sign-in and data calls will fail until you run:"
-  echo "           gcloud auth application-default login"
-  echo "         …or re-run setup and give a service-account key path."
-fi
+export KHOJ_WEB_URL="http://localhost:${WEB_PORT}"
+mkdir -p "$KHOJ_DATA_DIR"
 
 # Python env
 if [ ! -x "$VENV/bin/python" ]; then
@@ -202,12 +205,15 @@ echo "=================================================="
 echo " Khoj is running locally:"
 echo "   Web UI:  http://localhost:$WEB_PORT"
 echo "   Agent:   http://localhost:$AGENT_PORT/.well-known/agent-card.json"
+echo "   Data:    $KHOJ_DATA_DIR (storage: $KHOJ_STORAGE)"
 echo "   OpenRAG: $OPENRAG_URL"
 if [ -n "${JIRA_API_TOKEN:-}" ] && [ -n "${JIRA_BASE_URL:-}" ]; then
   echo "   Jira:    enabled → $JIRA_BASE_URL, project $JIRA_PROJECT_KEY"
 else
   echo "   Jira:    disabled (no token configured)"
 fi
+echo " First run: create your account on the sign-in page — the"
+echo " super-admin email above becomes platform admin automatically."
 echo " Press Ctrl+C to stop both services."
 echo "=================================================="
 wait
