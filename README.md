@@ -64,8 +64,8 @@ re-ingestion into OpenRAG.
 ## Run (local smoke test)
 
 ```bash
-cp .env.local.example .env.local   # or run scripts/start-local.sh --setup-only
-docker compose up -d --build
+bash scripts/run-local-stack.sh   # full stack incl. OpenRAG; config
+                                  # from the setup bucket — docs/local-run.md
 # UI on http://<host>:8081
 ```
 

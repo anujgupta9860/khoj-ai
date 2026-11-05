@@ -1,5 +1,48 @@
 # Run Khoj locally (end to end)
 
+## Fastest path — one script, config from the setup bucket
+
+Verified end to end on a Mac mini (Apple Silicon), 2026-11-05.
+
+1. Clone the repo:
+
+   ```bash
+   git clone https://github.com/anujgupta9860/khoj-ai.git ~/khoj-ai
+   cd ~/khoj-ai
+   ```
+
+2. Download the two config files from the private setup bucket
+   **gs://khoj-setup-innovation-lab** — they hold the real secrets
+   (OpenAI key, Jira token, passwords), so keep them private and never
+   commit them:
+   - `env.docker` — for the Docker stack (becomes `.env`)
+   - `env.local` — for the no-Docker script (becomes `.env.local`)
+
+   Either with gsutil:
+
+   ```bash
+   gsutil cp gs://khoj-setup-innovation-lab/env.docker ~/Downloads/env.docker
+   gsutil cp gs://khoj-setup-innovation-lab/env.local  ~/Downloads/env.local
+   ```
+
+   …or in a browser from the Cloud Console, e.g.
+   `https://console.cloud.google.com/storage/browser/_details/khoj-setup-innovation-lab/env.docker`
+
+3. Run one script — it installs/starts Docker if needed, places the
+   config files, brings the whole stack up, waits until every piece
+   answers, and prints the URLs:
+
+   ```bash
+   bash scripts/run-local-stack.sh
+   ```
+
+   Khoj lands on http://localhost:8081 (register there; the
+   super-admin email from `.env` becomes platform admin). Stop with
+   `bash scripts/run-local-stack.sh down`; follow logs with
+   `bash scripts/run-local-stack.sh logs`.
+
+Everything below is the manual equivalent of those steps.
+
 ## Option A — the complete stack, Docker only
 
 `docker-compose.yml` runs **everything**: Khoj web + A2A agent plus the
@@ -57,9 +100,33 @@ bash scripts/start-local.sh
 - You get: Web UI on the chosen port (default 8080) and the agent's
   AgentCard on its port (default 8090).
 
+### Point the script run at the Option A OpenRAG
+
+With the Docker stack up, its backend answers on
+`http://localhost:8000` — repoint an existing `.env.local` and restart:
+
+```bash
+sed -i '' 's|^OPENRAG_URL=.*|OPENRAG_URL=http://localhost:8000|' .env.local
+bash scripts/start-local.sh --yes
+```
+
+(macOS `sed` syntax — on Linux, drop the `''` after `-i`.)
+
+(The Option A Khoj on :8081 already uses the local backend — this is
+only for the Option B processes.) Note the local index starts empty:
+documents ingested into a different OpenRAG (e.g. GKE) must be
+re-uploaded before search/chat can find them here.
+
 ### What you need (Option B)
 
-- Python 3.10+.
+- Python 3.10+. ⚠️ On macOS the system `python3` is 3.9 and the agent
+  fails at import (`TypeError: unsupported operand type(s) for |`).
+  Install a current Python and make Homebrew win PATH:
+  `brew install python@3.12`, then
+  `echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile`
+  and open a new terminal. `python3 --version` must print 3.10+
+  before running the script; if a `.venv-local` was created by 3.9,
+  delete it (`rm -rf .venv-local`) so it is rebuilt.
 - No accounts or credentials to prepare: auth is built in and all
   data lives in the data dir you choose. Only if you pick
   `KHOJ_STORAGE=gcs` do you need Google credentials (gcloud ADC or a

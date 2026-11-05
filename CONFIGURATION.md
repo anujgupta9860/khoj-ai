@@ -101,8 +101,15 @@ creation: `POST /api/jira/ticket` with `{question, answer, orgId?}`.
 ## 5. Procedure A — run everything locally
 
 ```bash
-# Complete stack, Docker only (Khoj + agent + the full OpenRAG stack;
-# the openrag-init service finishes OpenRAG onboarding automatically):
+# One command (installs/starts Docker, places the config files that
+# were downloaded from the private setup bucket
+# gs://khoj-setup-innovation-lab — env.docker -> .env, env.local ->
+# .env.local — then compose up + health waits + URL list):
+bash scripts/run-local-stack.sh    # … down | logs
+
+# Manual equivalent — complete stack, Docker only (Khoj + agent + the
+# full OpenRAG stack; the openrag-init service finishes OpenRAG
+# onboarding automatically):
 cp .env.local.example .env         # set OPENAI_API_KEY + KHOJ_AUTH_SECRET
 docker compose up --build          # Khoj :8081 · OpenRAG :3000 · Langflow :7860
 
