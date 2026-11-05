@@ -473,6 +473,124 @@ def chat(body: ChatBody, authorization: str | None = Header(default=None)):
     }
 
 
+# --- Jira ticket creation ----------------------------------------------------
+# After an answer, the chat UI offers "Create Jira ticket". The web service
+# creates the issue on the configured Jira Cloud site (REST API v3, Basic
+# auth: account email + API token). Config is env-only; the token arrives
+# via External Secrets (GSM khoj-jira-api-token). Unconfigured = the status
+# endpoint reports disabled and the UI hides the button.
+
+def _jira_config() -> dict | None:
+    base = os.environ.get("JIRA_BASE_URL", "").rstrip("/")
+    email = os.environ.get("JIRA_EMAIL", "")
+    token = os.environ.get("JIRA_API_TOKEN", "")
+    project = os.environ.get("JIRA_PROJECT_KEY", "")
+    if not (base and email and token and project):
+        return None
+    return {"base": base, "email": email, "token": token, "project": project}
+
+
+def _adf(text: str) -> list:
+    """Plain text -> Atlassian Document Format paragraph nodes."""
+    nodes = []
+    for line in text.splitlines():
+        line = line.strip()
+        if line:
+            nodes.append({
+                "type": "paragraph",
+                "content": [{"type": "text", "text": line[:4000]}],
+            })
+    return nodes or [{"type": "paragraph", "content": [{"type": "text", "text": "-"}]}]
+
+
+def _adf_heading(text: str) -> dict:
+    return {
+        "type": "heading",
+        "attrs": {"level": 3},
+        "content": [{"type": "text", "text": text}],
+    }
+
+
+@app.get("/api/jira/status")
+def jira_status(authorization: str | None = Header(default=None)):
+    require_user(authorization)
+    cfg = _jira_config()
+    if not cfg:
+        return {"enabled": False}
+    return {"enabled": True, "projectKey": cfg["project"], "baseUrl": cfg["base"]}
+
+
+class JiraTicketBody(BaseModel):
+    question: str
+    answer: str
+    orgId: str | None = None
+
+
+@app.post("/api/jira/ticket")
+def jira_ticket(body: JiraTicketBody, authorization: str | None = Header(default=None)):
+    user = require_user(authorization)
+    cfg = _jira_config()
+    if not cfg:
+        raise HTTPException(status_code=501, detail="Jira is not configured on this deployment")
+    question = body.question.strip()
+    answer = body.answer.strip()
+    if not question or not answer:
+        raise HTTPException(status_code=422, detail="question and answer are required")
+    summary = " ".join(question.split())
+    if len(summary) > 200:
+        summary = summary[:197] + "..."
+    scope = "an organization corpus" if body.orgId else "personal documents"
+    meta = f"Asked by {user.get('email', '')} via Khoj chat ({scope})."
+    payload = {
+        "fields": {
+            "project": {"key": cfg["project"]},
+            "summary": summary,
+            "issuetype": {"name": "Task"},
+            "description": {
+                "type": "doc",
+                "version": 1,
+                "content": (
+                    [_adf_heading("Question")]
+                    + _adf(question)
+                    + [_adf_heading("Answer")]
+                    + _adf(answer)
+                    + _adf(meta)
+                ),
+            },
+        }
+    }
+    try:
+        resp = requests.post(
+            f"{cfg['base']}/rest/api/3/issue",
+            json=payload,
+            auth=(cfg["email"], cfg["token"]),
+            headers={"Accept": "application/json"},
+            timeout=20,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Jira request failed: {e}")
+    if resp.status_code not in (200, 201):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Jira returned {resp.status_code}: {resp.text[:300]}",
+        )
+    data = resp.json()
+    key = data.get("key", "")
+    url = f"{cfg['base']}/browse/{key}" if key else cfg["base"]
+    log_event(
+        kind="jira",
+        uid=user["uid"],
+        email=user.get("email", ""),
+        orgId=body.orgId,
+        query=question,
+        summary=f"Jira ticket {key}",
+        results=None,
+        latencyMs=None,
+        source="chat",
+    )
+    return {"key": key, "url": url}
+
+
 @app.get("/api/documents")
 def documents(orgId: str | None = None, authorization: str | None = Header(default=None)):
     user = require_user(authorization)

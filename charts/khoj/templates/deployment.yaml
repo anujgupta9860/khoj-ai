@@ -32,6 +32,20 @@ spec:
               value: {{ .Values.firebase.apiKey }}
             - name: FIREBASE_AUTH_DOMAIN
               value: {{ .Values.firebase.authDomain }}
+            - name: JIRA_BASE_URL
+              value: {{ .Values.jira.baseUrl | quote }}
+            - name: JIRA_EMAIL
+              value: {{ .Values.jira.email | quote }}
+            - name: JIRA_PROJECT_KEY
+              value: {{ .Values.jira.projectKey | quote }}
+            - name: JIRA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.jira.secretName }}
+                  key: JIRA_API_TOKEN
+                  # Optional: the pod must start before the GSM secret
+                  # exists; the feature simply stays disabled until then.
+                  optional: true
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           readinessProbe:

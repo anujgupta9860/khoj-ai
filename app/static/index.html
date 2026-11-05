@@ -112,6 +112,11 @@
   .msg.you { align-self: flex-end; background: var(--muted); color: var(--fg); border-bottom-right-radius: 6px; }
   .msg.bot { align-self: flex-start; background: #fff; border: 1px solid var(--border); border-bottom-left-radius: 6px; }
   .msg.thinking { opacity: .55; font-style: italic; }
+  .msg-actions { align-self: flex-start; margin-top: -6px; }
+  .ticketbtn { font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: #fff; color: var(--fg); cursor: pointer; }
+  .ticketbtn:hover:not(:disabled) { border-color: var(--accent); }
+  .ticketbtn:disabled { opacity: .55; cursor: default; }
+  .msg-actions a { font-size: 12.5px; color: var(--accent); text-decoration: none; font-weight: 600; }
   #chatfoot { border-top: 1px solid var(--border); padding: 12px 14px; }
   #chatfoot .row { align-items: center; border: 1px solid var(--input); border-radius: 14px; padding: 4px 4px 4px 12px; background: #fff; }
   #chatfoot .row:focus-within { border-color: var(--fg); box-shadow: 0 0 0 3px rgba(9,9,11,.07); }
@@ -696,6 +701,50 @@ function chatSyncCorpus() {
 $("chatfab").onclick = () => { $("chatpanel").classList.add("open"); chatSyncCorpus(); $("chatinput").focus(); };
 $("chatclose").onclick = () => $("chatpanel").classList.remove("open");
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("chatpanel").classList.remove("open"); });
+let _jiraEnabled = null;
+async function jiraEnabled() {
+  if (_jiraEnabled !== null) return _jiraEnabled;
+  try {
+    const r = await fetch("/api/jira/status", { headers: { Authorization: "Bearer " + (await token()) } });
+    const d = await r.json();
+    _jiraEnabled = !!d.enabled;
+  } catch (e) { _jiraEnabled = false; }
+  return _jiraEnabled;
+}
+async function attachTicketButton(question, answer, orgId) {
+  if (!(await jiraEnabled())) return;
+  const row = document.createElement("div");
+  row.className = "msg-actions";
+  const btn = document.createElement("button");
+  btn.className = "ticketbtn";
+  btn.textContent = "🎫 Create Jira ticket";
+  btn.onclick = async () => {
+    btn.disabled = true;
+    btn.textContent = "Creating…";
+    try {
+      const r = await fetch("/api/jira/ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + (await token()) },
+        body: JSON.stringify({ question: question, answer: answer, orgId: orgId }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      const a = document.createElement("a");
+      a.href = d.url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = "🎫 " + d.key;
+      btn.replaceWith(a);
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = "🎫 Create Jira ticket";
+      $("chaterr").textContent = "Jira ticket failed: " + e.message;
+    }
+  };
+  row.appendChild(btn);
+  $("chatlog").appendChild(row);
+  chatScroll();
+}
 async function doChat() {
   const text = $("chatinput").value.trim();
   if (!text) return;
@@ -715,6 +764,7 @@ async function doChat() {
     chatContext = data.contextId;
     thinking.remove();
     chatAdd("Khoj", data.reply + (data.sources && data.sources.length ? "\n\nSources: " + data.sources.join(", ") : ""));
+    attachTicketButton(text, data.reply, currentOrg());
   } catch (e) {
     $("chaterr").textContent = "Chat failed: " + e;
   } finally {
