@@ -3,10 +3,14 @@ kind: BackendConfig
 metadata:
   name: opensearch-dashboards
 spec:
-  # Dashboards answers GET / with a 302 redirect to its login page, which
-  # the default GCE ingress health check counts as UNHEALTHY (the pod is
-  # fine; the public URL 502s). /api/status returns 200 when the app is up.
+  # Why /app/login: the GCE ingress health check needs a 200, and this
+  # Dashboards build (security plugin on) has none among the obvious
+  # paths — verified in-cluster 2026-11-04: GET / -> 302 (login
+  # redirect), GET /api/status -> 401 (the status API requires auth in
+  # this version), but GET /app/login -> 200 (the login page itself is
+  # served unauthenticated). Probing it proves the app server is up and
+  # serving its UI without opening any data path.
   healthCheck:
     type: HTTP
-    requestPath: /api/status
+    requestPath: /app/login
     port: 5601
