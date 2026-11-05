@@ -71,7 +71,7 @@ service:
 
 ingress:
   enabled: true
-  host: ""            # e.g. khoj.example.com; empty = IP-only via LB address
+  host: "34.8.195.76.nip.io"  # public hostname (nip.io wildcard DNS -> the LB IP); the template also keeps a hostless catch-all rule, so the bare IP keeps working
   staticIpName: ""    # GKE reserved static IP name, optional
 
 resources:

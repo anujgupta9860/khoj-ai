@@ -4,7 +4,7 @@ backendPort: "8000"
 backendSsl: "false"
 ingress:
   enabled: true
-  host: ""            # empty = IP-only via LB address
+  host: "34.102.202.103.nip.io"  # public hostname (nip.io wildcard DNS -> the LB IP); the template also keeps a hostless catch-all rule, so the bare IP keeps working
   staticIpName: ""    # GKE reserved static IP name, optional
 resources:
   requests: { cpu: "100m", memory: "256Mi" }

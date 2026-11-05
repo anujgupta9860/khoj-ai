@@ -2,7 +2,7 @@ image: langflowai/openrag-langflow:latest
 doclingUrl: http://docling:5001
 ingress:
   enabled: true
-  host: ""            # empty = IP-only via LB address
+  host: "136.68.156.112.nip.io"  # public hostname (nip.io wildcard DNS -> the LB IP); the template also keeps a hostless catch-all rule, so the bare IP keeps working
   staticIpName: ""    # GKE reserved static IP name, optional
 superuser: langflow
 # Password is NOT a value: it syncs from Google Secret Manager

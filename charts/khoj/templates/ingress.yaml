@@ -12,9 +12,19 @@ spec:
   rules:
     {{- if .Values.ingress.host }}
     - host: {{ .Values.ingress.host }}
-    {{- else }}
-    - {{- end }}
       http:
+        paths:
+          - path: /*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: khoj
+                port:
+                  number: {{ .Values.service.port }}
+    {{- end }}
+    # Hostless catch-all: keeps the bare LB IP (and any other hostname)
+    # working alongside the named host above.
+    - http:
         paths:
           - path: /*
             pathType: ImplementationSpecific

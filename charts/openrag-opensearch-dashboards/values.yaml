@@ -2,7 +2,7 @@ image: opensearchproject/opensearch-dashboards:3.0.0
 opensearchHost: https://opensearch:9200
 ingress:
   enabled: true
-  host: ""            # empty = IP-only via LB address
+  host: "8.233.7.242.nip.io"  # public hostname (nip.io wildcard DNS -> the LB IP); the template also keeps a hostless catch-all rule, so the bare IP keeps working
   staticIpName: ""    # GKE reserved static IP name, optional
 resources:
   requests: { cpu: "250m", memory: "512Mi" }
