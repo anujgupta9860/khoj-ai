@@ -1,0 +1,12 @@
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: opensearch-dashboards
+spec:
+  # Dashboards answers GET / with a 302 redirect to its login page, which
+  # the default GCE ingress health check counts as UNHEALTHY (the pod is
+  # fine; the public URL 502s). /api/status returns 200 when the app is up.
+  healthCheck:
+    type: HTTP
+    requestPath: /api/status
+    port: 5601
