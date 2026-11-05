@@ -5,8 +5,13 @@ ingress:
   host: "136.68.156.112.nip.io"  # public hostname (nip.io wildcard DNS -> the LB IP); the template also keeps a hostless catch-all rule, so the bare IP keeps working
   staticIpName: ""    # GKE reserved static IP name, optional
 # Embedding model the ingestion flow uses (env-forced Langflow global).
-# GKE runs Gemini embeddings via the OpenAI-compatible endpoint.
-embeddingModel: "gemini-embedding-001"
+# GKE runs Gemini embeddings via the OpenAI-compatible endpoint. The
+# "openai:openai/..." form is deliberate: OpenRAG's gateway strips one
+# provider tag before calling LiteLLM, and LiteLLM misroutes BARE
+# Gemini model names to Vertex/native Google APIs. The surviving
+# "openai/gemini-embedding-001" is what makes LiteLLM use the
+# OpenAI-compatible transport with our api_base + key.
+embeddingModel: "openai:openai/gemini-embedding-001"
 
 superuser: langflow
 # Password is NOT a value: it syncs from Google Secret Manager
