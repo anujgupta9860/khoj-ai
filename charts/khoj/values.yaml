@@ -22,17 +22,22 @@ firebase:
 agent:
   url: "http://khoj-agent"
 
-# Jira ticket creation from chat answers (optional). baseUrl/email/
-# projectKey are plain config; the API token comes from GSM via the
-# ExternalSecret below, never from values. Empty baseUrl = feature off.
+# Jira ticket creation from chat answers (optional). EVERY Atlassian
+# setting lives here in Helm values - the app only reads env. baseUrl/
+# email/projectKey/issueType are plain config; the API token itself is
+# the one exception: it comes from GSM via the ExternalSecret below
+# (point gsmKey at the secret that holds it), never from values.
+# Empty baseUrl = feature off.
 jira:
-  baseUrl: ""          # e.g. https://your-site.atlassian.net
-  email: ""            # Atlassian account email the API token belongs to
-  projectKey: ""       # e.g. KHOJ
-  secretName: khoj-jira
+  baseUrl: "https://khoj.atlassian.net"
+  email: "anuj.gupta9860@gmail.com"   # Atlassian account email the API token belongs to
+  projectKey: "RAG"                   # default project for new tickets (the "Rag" project on this site)
+  issueType: "Task"                   # issue type created by the button
+  secretName: khoj-jira               # k8s Secret the ExternalSecret creates
   externalSecret:
     enabled: true
-    gsmKey: khoj-jira-api-token
+    gsmKey: khoj-jira-api-token       # Google Secret Manager secret holding the API token
+    refreshInterval: 1h
 
 workloadIdentity:
   # Google service account the pods act as (storage object admin on the

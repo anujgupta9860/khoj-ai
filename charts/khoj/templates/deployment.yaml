@@ -38,6 +38,8 @@ spec:
               value: {{ .Values.jira.email | quote }}
             - name: JIRA_PROJECT_KEY
               value: {{ .Values.jira.projectKey | quote }}
+            - name: JIRA_ISSUE_TYPE
+              value: {{ .Values.jira.issueType | quote }}
             - name: JIRA_API_TOKEN
               valueFrom:
                 secretKeyRef:

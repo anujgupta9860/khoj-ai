@@ -487,7 +487,13 @@ def _jira_config() -> dict | None:
     project = os.environ.get("JIRA_PROJECT_KEY", "")
     if not (base and email and token and project):
         return None
-    return {"base": base, "email": email, "token": token, "project": project}
+    return {
+        "base": base,
+        "email": email,
+        "token": token,
+        "project": project,
+        "issue_type": os.environ.get("JIRA_ISSUE_TYPE", "Task"),
+    }
 
 
 def _adf(text: str) -> list:
@@ -545,7 +551,7 @@ def jira_ticket(body: JiraTicketBody, authorization: str | None = Header(default
         "fields": {
             "project": {"key": cfg["project"]},
             "summary": summary,
-            "issuetype": {"name": "Task"},
+            "issuetype": {"name": cfg["issue_type"]},
             "description": {
                 "type": "doc",
                 "version": 1,
