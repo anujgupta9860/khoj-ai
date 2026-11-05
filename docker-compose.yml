@@ -1,23 +1,221 @@
-# Khoj locally with Docker: web + A2A agent on one shared data volume.
-#   cp .env.local.example .env.local   # or: bash scripts/start-local.sh --setup-only
+# The COMPLETE Khoj stack with only Docker — Khoj web + A2A agent + the
+# full OpenRAG stack (OpenSearch, Dashboards, Docling, Langflow, backend,
+# frontend), wired exactly like the GKE deployment (same images, same
+# in-cluster hostnames, same models), but with local volumes and a plain
+# .env file instead of GKE/GSM/ESO.
+#
+#   cp .env.local.example .env     # fill in OPENAI_API_KEY + KHOJ_AUTH_SECRET
 #   docker compose up --build
-# OpenRAG stays external - point OPENRAG_URL at a running instance
-# (local backend http://host.docker.internal:8000, or the GKE stack
-# through its app proxy http://34.102.202.103/api).
+#
+# Then:  Khoj        http://localhost:8081
+#        OpenRAG UI  http://localhost:3000
+#        Langflow    http://localhost:7860   (langflow / $LANGFLOW_SUPERUSER_PASSWORD)
+#        Dashboards  http://localhost:5601   (admin / $OPENSEARCH_PASSWORD)
+#
+# A one-shot `openrag-init` service completes OpenRAG onboarding
+# server-side (provider + models + OCR on), so there is no setup wizard.
+#
+# Khoj-only mode (OpenRAG hosted elsewhere, e.g. GKE): set OPENRAG_URL in
+# .env to the external instance and start just the product services:
+#   docker compose up --no-deps khoj khoj-agent
+#
+# The same stack deploys to GKE from the Helm charts under charts/
+# (see docs/production-deploy-gke.md) — compose is the local twin.
+
 services:
+  # ---------------------------------------------------------------- OpenRAG
+  opensearch:
+    image: docker.io/langflowai/openrag-opensearch:${OPENRAG_VERSION:-latest}
+    container_name: khoj-opensearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_PASSWORD:-KhojLocal!234}
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:-KhojLocal!234}
+      OPENSEARCH_JAVA_OPTS: -Xms1g -Xmx1g
+      OPENRAG_BACKEND_HOST: openrag-backend
+      OPENRAG_BACKEND_PORT: "8000"
+    ports:
+      - "${OPENSEARCH_PORT:-9200}:9200"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    stop_grace_period: 2m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -ku admin:$$OPENSEARCH_PASSWORD 'https://localhost:9200/_cluster/health' -s | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  dashboards:
+    image: docker.io/opensearchproject/opensearch-dashboards:${DASHBOARDS_VERSION:-3.8.0}
+    container_name: khoj-dashboards
+    restart: unless-stopped
+    depends_on:
+      - opensearch
+    environment:
+      OPENSEARCH_HOSTS: '["https://opensearch:9200"]'
+      OPENSEARCH_USERNAME: admin
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:-KhojLocal!234}
+    ports:
+      - "${DASHBOARDS_PORT:-5601}:5601"
+
+  docling:
+    image: ghcr.io/docling-project/docling-serve:${DOCLING_VERSION:-latest}
+    container_name: khoj-docling
+    restart: unless-stopped
+    ports:
+      - "${DOCLING_PORT:-5001}:5001"
+
+  langflow:
+    image: docker.io/langflowai/openrag-langflow:${OPENRAG_VERSION:-latest}
+    container_name: khoj-langflow
+    restart: unless-stopped
+    depends_on:
+      - opensearch
+    ports:
+      - "${LANGFLOW_PORT:-7860}:7860"
+    volumes:
+      - langflow-data:/app/langflow-data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      LANGFLOW_CONFIG_DIR: /app/langflow-data
+      LANGFLOW_DATABASE_URL: sqlite:////app/langflow-data/langflow.db
+      LANGFLOW_SUPERUSER: ${LANGFLOW_SUPERUSER:-langflow}
+      LANGFLOW_SUPERUSER_PASSWORD: ${LANGFLOW_SUPERUSER_PASSWORD:-KhojLangflow!234}
+      LANGFLOW_AUTO_LOGIN: "false"
+      LANGFLOW_NEW_USER_IS_ACTIVE: "true"
+      LANGFLOW_LOG_LEVEL: INFO
+      LANGFLOW_WORKERS: "1"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_ENDPOINT:-}
+      OPENRAG_LLM_TOKEN: openrag-local-token
+      OPENSEARCH_HOST: opensearch
+      OPENSEARCH_PORT: "9200"
+      OPENSEARCH_URL: https://opensearch:9200
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:-KhojLocal!234}
+      OPENSEARCH_INDEX_NAME: documents
+      DOCLING_SERVE_URL: http://docling:5001
+      DOCLING_SERVE_VERIFY_SSL: "false"
+      SELECTED_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      # Flow-runtime variables the bundled OpenRAG flows read from env.
+      JWT: ""
+      OWNER: "None"
+      OWNER_NAME: "None"
+      OWNER_EMAIL: "None"
+      CONNECTOR_TYPE: system
+      CONNECTOR_TYPE_URL: url
+      DOCUMENT_ID: "None"
+      SOURCE_URL: "None"
+      ALLOWED_USERS: "[]"
+      ALLOWED_GROUPS: "[]"
+      ALLOWED_PRINCIPALS: "[]"
+      OPENRAG-QUERY-FILTER: "{}"
+      OPENRAG_INGEST_URL: OPENRAG_INGEST_URL
+      OPENRAG_INGEST_TOKEN: ""
+      OPENRAG_INGEST_RUN_ID: OPENRAG_INGEST_RUN_ID
+      OPENRAG_INGEST_BATCH_SIZE: "100"
+      DOCLING_TASK_ID: "None"
+      FILENAME: "None"
+      MIMETYPE: "None"
+      FILESIZE: "0"
+      LANGFLOW_VARIABLES_TO_GET_FROM_ENVIRONMENT: "JWT,OPENRAG-QUERY-FILTER,OPENSEARCH_PASSWORD,OPENSEARCH_URL,DOCLING_SERVE_URL,DOCLING_SERVE_VERIFY_SSL,DOCLING_TASK_ID,OWNER,OWNER_NAME,OWNER_EMAIL,CONNECTOR_TYPE,DOCUMENT_ID,SOURCE_URL,ALLOWED_USERS,ALLOWED_GROUPS,ALLOWED_PRINCIPALS,FILENAME,MIMETYPE,FILESIZE,SELECTED_EMBEDDING_MODEL,OPENAI_API_KEY,OPENRAG_LLM_TOKEN,OPENRAG_LLM_BASE_URL,ANTHROPIC_API_KEY,OLLAMA_BASE_URL,OPENSEARCH_INDEX_NAME,OPENRAG_INGEST_URL,OPENRAG_INGEST_TOKEN,OPENRAG_INGEST_RUN_ID,OPENRAG_INGEST_BATCH_SIZE"
+
+  openrag-backend:
+    image: docker.io/langflowai/openrag-backend:${OPENRAG_VERSION:-latest}
+    container_name: khoj-openrag-backend
+    restart: unless-stopped
+    depends_on:
+      - langflow
+      - opensearch
+      - docling
+    ports:
+      - "${OPENRAG_BACKEND_PORT:-8000}:8000"
+    volumes:
+      - openrag-documents:/app/openrag-documents
+      - openrag-keys:/app/keys
+      - openrag-flows:/app/flows
+      - openrag-config:/app/config
+      - openrag-data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      OPENSEARCH_HOST: opensearch
+      OPENSEARCH_PORT: "9200"
+      OPENSEARCH_USERNAME: admin
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:-KhojLocal!234}
+      OPENSEARCH_NODE_COUNT_CHECK_ENABLED: "false"
+      OPENSEARCH_INDEX_NAME: documents
+      OPENRAG_OPENSEARCH_NUMBER_OF_SHARDS: "1"
+      OPENRAG_OPENSEARCH_NUMBER_OF_REPLICAS: "0"
+      LANGFLOW_URL: http://langflow:7860
+      LANGFLOW_PUBLIC_URL: http://localhost:${LANGFLOW_PORT:-7860}
+      LANGFLOW_SUPERUSER: ${LANGFLOW_SUPERUSER:-langflow}
+      LANGFLOW_SUPERUSER_PASSWORD: ${LANGFLOW_SUPERUSER_PASSWORD:-KhojLangflow!234}
+      LANGFLOW_AUTO_LOGIN: "false"
+      DOCLING_SERVE_URL: http://docling:5001
+      DOCLING_SERVE_VERIFY_SSL: "false"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openai}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT:-}
+      INGEST_SAMPLE_DATA: ${INGEST_SAMPLE_DATA:-false}
+      ENVIRONMENT: local
+      LOG_LEVEL: INFO
+
+  openrag-frontend:
+    image: docker.io/langflowai/openrag-frontend:${OPENRAG_VERSION:-latest}
+    container_name: khoj-openrag-frontend
+    restart: unless-stopped
+    depends_on:
+      - openrag-backend
+    environment:
+      OPENRAG_BACKEND_HOST: openrag-backend
+      OPENRAG_BACKEND_PORT: "8000"
+      OPENRAG_BACKEND_SSL: "false"
+    ports:
+      - "${OPENRAG_FRONTEND_PORT:-3000}:3000"
+
+  # One-shot: completes OpenRAG onboarding server-side (same calls the
+  # setup scripts use) and turns OCR on, matching the GKE configuration.
+  # Safe to re-run: `docker compose run --rm openrag-init` after changing
+  # models in .env.
+  openrag-init:
+    image: python:3.12-alpine
+    container_name: khoj-openrag-init
+    depends_on:
+      - openrag-backend
+    environment:
+      OPENRAG_URL: http://openrag-backend:8000
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openai}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT:-http://host.docker.internal:11434}
+    volumes:
+      - ./docker/openrag-init.py:/openrag-init.py:ro
+    command: ["python3", "/openrag-init.py"]
+
+  # ------------------------------------------------------------------ Khoj
   khoj:
     build: .
     container_name: khoj
     restart: unless-stopped
     ports:
-      - "8081:8080"
+      - "${KHOJ_PORT:-8081}:8080"
     environment:
       KHOJ_DATA_DIR: /data
       KHOJ_STORAGE: ${KHOJ_STORAGE:-local}
       KHOJ_BUCKET: ${KHOJ_BUCKET:-}
-      KHOJ_AUTH_SECRET: ${KHOJ_AUTH_SECRET:?set KHOJ_AUTH_SECRET in .env.local}
+      KHOJ_AUTH_SECRET: ${KHOJ_AUTH_SECRET:?set KHOJ_AUTH_SECRET in .env}
       KHOJ_SUPER_ADMIN_EMAIL: ${KHOJ_SUPER_ADMIN_EMAIL:-}
-      OPENRAG_URL: ${OPENRAG_URL:-http://34.102.202.103/api}
+      OPENRAG_URL: ${OPENRAG_URL:-http://openrag-backend:8000}
       KHOJ_AGENT_URL: http://khoj-agent
       JIRA_BASE_URL: ${JIRA_BASE_URL:-}
       JIRA_EMAIL: ${JIRA_EMAIL:-}
@@ -26,6 +224,8 @@ services:
       JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
     volumes:
       - khoj-data:/data
+    depends_on:
+      - openrag-backend
 
   khoj-agent:
     build:
@@ -35,8 +235,8 @@ services:
     restart: unless-stopped
     environment:
       KHOJ_WEB_URL: http://khoj:8080
-      KHOJ_AUTH_SECRET: ${KHOJ_AUTH_SECRET:?set KHOJ_AUTH_SECRET in .env.local}
-      OPENRAG_URL: ${OPENRAG_URL:-http://34.102.202.103/api}
+      KHOJ_AUTH_SECRET: ${KHOJ_AUTH_SECRET:?set KHOJ_AUTH_SECRET in .env}
+      OPENRAG_URL: ${OPENRAG_URL:-http://openrag-backend:8000}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
     depends_on:
@@ -44,3 +244,10 @@ services:
 
 volumes:
   khoj-data:
+  opensearch-data:
+  langflow-data:
+  openrag-documents:
+  openrag-keys:
+  openrag-flows:
+  openrag-config:
+  openrag-data:

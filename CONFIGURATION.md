@@ -101,11 +101,16 @@ creation: `POST /api/jira/ticket` with `{question, answer, orgId?}`.
 ## 5. Procedure A — run everything locally
 
 ```bash
+# Complete stack, Docker only (Khoj + agent + the full OpenRAG stack;
+# the openrag-init service finishes OpenRAG onboarding automatically):
+cp .env.local.example .env         # set OPENAI_API_KEY + KHOJ_AUTH_SECRET
+docker compose up --build          # Khoj :8081 · OpenRAG :3000 · Langflow :7860
+
+# No-Docker alternative (web+agent as Python processes, OpenRAG external):
 bash scripts/start-local.sh        # asks all config, writes .env.local,
                                    # builds .venv-local, starts web+agent
 bash scripts/start-local.sh --setup-only   # config only
 bash scripts/start-local.sh --yes          # reuse .env.local, no prompts
-docker compose up --build          # alternative: containers, one volume
 ```
 
 The script asks for: ports, data dir, **storage backend (local|gcs)**,
