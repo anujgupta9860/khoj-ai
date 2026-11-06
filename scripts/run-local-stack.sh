@@ -28,7 +28,7 @@ BUCKET="${KHOJ_SETUP_BUCKET:-}"   # optional: your own private bucket
 # root, the Khoj containers verify outbound HTTPS against that bundle
 # too (TLS-inspecting corporate networks — e.g. Jira failing with
 # CERTIFICATE_VERIFY_FAILED). See docker-compose.ca.yml.
-COMPOSE=(docker compose)
+COMPOSE=(docker compose -f docker-compose.yml)
 if [ -f "$ROOT/corp-ca.pem" ]; then
   COMPOSE+=(-f docker-compose.ca.yml)
   echo "Found corp-ca.pem — Khoj containers will trust that CA bundle."
