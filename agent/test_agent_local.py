@@ -352,3 +352,7 @@ _text = agent_main.fetch_document_text(
 assert _text and "pump warranty is 2 years" in _text, _text
 assert agent_main.fetch_document_text("doc-missing", "x.md", {"_auth": "Bearer x"}) is None
 print("raw fetch ok")
+
+# --- citation markers are stripped from the final answer -------------------
+assert agent_main._strip_citations("Wi-Fi 7 [1], mesh [1], [4] and DFS [12].") == "Wi-Fi 7, mesh and DFS."
+print("citation strip ok")
