@@ -103,7 +103,7 @@
   /* ---------- Chat (slide-over, OpenRAG chat styling) ---------- */
   #chatfab { position: fixed; right: 22px; bottom: 22px; z-index: 40; width: 54px; height: 54px; border-radius: 50%; background: var(--fg); color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 26px -8px rgba(9,9,11,.45); padding: 0; }
   #chatfab svg { width: 24px; height: 24px; }
-  #chatpanel { position: fixed; inset: 0; z-index: 41; height: 100dvh; display: flex; flex-direction: column; background: #fff; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .18s ease, visibility .18s; }
+  #chatpanel { position: fixed; top: 0; right: 0; bottom: 0; left: 264px; z-index: 41; height: 100dvh; display: flex; flex-direction: column; background: #fff; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .18s ease, visibility .18s; }
   #chatpanel.open { opacity: 1; visibility: visible; pointer-events: auto; }
   #docfile { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
   #chathead { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 18px 10px; }
@@ -145,6 +145,7 @@
     #sidebar .spacer { display: none; }
     #userbox { border-top: 0; flex-direction: row; align-items: center; margin-left: auto; }
     main { padding: 22px 16px 80px; }
+    #chatpanel { left: 0; }
   }
 </style>
 </head>
