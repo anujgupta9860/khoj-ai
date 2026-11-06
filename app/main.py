@@ -787,12 +787,33 @@ def delete_document(
         raise HTTPException(status_code=404, detail="Document not found")
     filename = record.get("filename", "")
     or_name = openrag_filename(doc_id, filename)
-    resp = requests.post(
-        f"{OPENRAG_URL}/documents/delete-by-filename",
-        json={"filename": or_name},
-        timeout=30,
+    # OpenRAG reports "no matching chunks" as a failure (success:false,
+    # deleted_chunks:0) — for a document that is still indexing or
+    # failed, that IS the desired end state: nothing in the index.
+    # Only a real index error blocks the delete.
+    try:
+        resp = requests.post(
+            f"{OPENRAG_URL}/documents/delete-by-filename",
+            json={"filename": or_name},
+            timeout=30,
+        )
+        try:
+            payload = resp.json()
+        except Exception:
+            payload = {}
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Index delete unreachable, nothing was removed: {exc}",
+        )
+    if not isinstance(payload, dict):
+        payload = {}
+    no_chunks = payload.get("deleted_chunks") == 0 and (
+        "No matching document chunks" in str(payload.get("error") or "")
+        or "No matching document chunks" in str(payload.get("message") or "")
     )
-    if resp.status_code != 200:
+    index_ok = (resp.status_code == 200 and payload.get("success") is not False) or no_chunks
+    if not index_ok:
         raise HTTPException(
             status_code=502,
             detail=f"Index delete failed, nothing was removed: {resp.text[:200]}",

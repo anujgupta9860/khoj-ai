@@ -587,6 +587,13 @@ def delete_post(url, json=None, files=None, headers=None, timeout=None):
         del_calls.append(json["filename"])
         if json["filename"].endswith("fail.md"):
             return Resp({"error": "boom"}, status=500)
+        if json["filename"].endswith("pending.md"):
+            # still indexing: OpenRAG reports zero chunks as a failure
+            return Resp({
+                "success": False, "deleted_chunks": 0,
+                "error": "No matching document chunks were deleted. "
+                         "The file may be missing or not deletable.",
+            }, status=404)
         return Resp({"success": True, "deleted_chunks": 3})
     if path == "/knowledge-filter/search":
         return Resp({"results": [{
@@ -634,6 +641,17 @@ r = client.request("DELETE", f"/api/documents/{FAIL_ID}", headers=H)
 assert r.status_code == 502, r.status_code
 assert any(rec["docId"] == FAIL_ID for rec in main._org_service.list_uploads("user:user-123"))
 main._org_service.remove_upload(FAIL_ID)
+
+# a still-indexing document (no chunks yet) deletes cleanly too
+PEND_ID = main.document_id("users/user-123", "pending.md")
+main._org_service.record_upload({
+    "docId": PEND_ID, "scopeKey": "user:user-123", "uid": "user-123",
+    "orgId": None, "filename": "pending.md", "openragTask": "task-9",
+    "uploadedAt": 0,
+})
+r = client.request("DELETE", f"/api/documents/{PEND_ID}", headers=H)
+assert r.status_code == 200, r.text
+assert all(rec["docId"] != PEND_ID for rec in main._org_service.list_uploads("user:user-123"))
 
 main.requests.post = _real_post
 if _real_del is not None:
