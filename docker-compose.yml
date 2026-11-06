@@ -84,6 +84,21 @@ services:
     image: ghcr.io/docling-project/docling-serve:${DOCLING_VERSION:-latest}
     container_name: khoj-docling
     restart: unless-stopped
+    environment:
+      <<: *internal-env
+      # Docling's PDF/OCR models are the stack's CPU/RAM hog, and a
+      # docling OOM-kill mid-parse surfaces downstream as "document
+      # processing result could not be found / task expired". Let its
+      # math libraries use the cores the Docker VM has (override with
+      # DOCLING_THREADS) and reserve memory so neighbours cannot
+      # starve it. The hard ceiling stays the Docker Desktop VM size
+      # (Settings -> Resources) - raise that too on smaller machines.
+      OMP_NUM_THREADS: ${DOCLING_THREADS:-4}
+      MKL_NUM_THREADS: ${DOCLING_THREADS:-4}
+    deploy:
+      resources:
+        reservations:
+          memory: 2G
     ports:
       - "${DOCLING_PORT:-5001}:5001"
 
