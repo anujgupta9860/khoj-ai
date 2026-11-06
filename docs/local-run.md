@@ -204,3 +204,18 @@ docker exec khoj-openrag-frontend node -e "fetch('http://openrag-backend:8000/fi
 - `ERR` with `ECONNREFUSED` -> the name resolved but nothing listens
   on the backend port: the backend container is down or restarting.
   Check `docker compose ps`, then `docker compose logs openrag-backend`.
+
+If a bare request still fails while the manual fetch works, check
+whether the frontend's bundled code reads the variable at runtime at
+all — the app executes from the entrypoint's copy in
+`/tmp/openrag-frontend`:
+
+```
+docker exec khoj-openrag-frontend sh -c 'grep -c OPENRAG_BACKEND_SSL "/tmp/openrag-frontend/.next/server/app/api/[...path]/route.js"'
+```
+
+- `1` or more -> the bundle looks the variable up at runtime; the
+  running process's environment differs from the container config.
+- `0` -> the value was compiled into the published image at build
+  time and the compose setting cannot reach it; build the frontend
+  from source instead of pulling the published image.
