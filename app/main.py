@@ -579,6 +579,71 @@ def _adf_heading(text: str) -> dict:
     }
 
 
+# Chat answers carry source citations like "[1]" / "[1], [4]" - they
+# point at the chat's source list and are noise inside a ticket.
+_CITE_RE = re.compile(r"(?:\s*\[\d+\])(?:\s*,\s*\[\d+\])*")
+_INLINE_RE = re.compile(r"(\*\*[^*]+\*\*|\*[^*\n]+\*|`[^`]+`)")
+
+
+def _adf_inline(text: str) -> list:
+    """One line of Markdown -> ADF text nodes with strong/em/code marks."""
+    nodes = []
+    for part in _INLINE_RE.split(text):
+        if not part:
+            continue
+        if part.startswith("**") and part.endswith("**") and len(part) > 4:
+            nodes.append({"type": "text", "text": part[2:-2], "marks": [{"type": "strong"}]})
+        elif part.startswith("*") and part.endswith("*") and len(part) > 2:
+            nodes.append({"type": "text", "text": part[1:-1], "marks": [{"type": "em"}]})
+        elif part.startswith("`") and part.endswith("`") and len(part) > 2:
+            nodes.append({"type": "text", "text": part[1:-1], "marks": [{"type": "code"}]})
+        else:
+            nodes.append({"type": "text", "text": part})
+    return nodes or [{"type": "text", "text": "-"}]
+
+
+def _md_to_adf(text: str) -> list:
+    """Markdown-ish chat text -> ADF: headings, bullet/numbered lists,
+    paragraphs with inline marks. Citations are stripped first."""
+    text = _CITE_RE.sub("", text or "")
+    nodes: list = []
+    state = {"kind": None, "items": []}
+
+    def flush():
+        if state["kind"] and state["items"]:
+            nodes.append({"type": state["kind"], "content": state["items"]})
+        state["kind"], state["items"] = None, []
+
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        bullet = re.match(r"^\s*[-*•]\s+(.*)$", line)
+        numbered = re.match(r"^\s*\d+[.)]\s+(.*)$", line)
+        heading = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if bullet or numbered:
+            kind = "bulletList" if bullet else "orderedList"
+            if state["kind"] != kind:
+                flush()
+                state["kind"] = kind
+            state["items"].append({
+                "type": "listItem",
+                "content": [{"type": "paragraph", "content": _adf_inline((bullet or numbered).group(1))}],
+            })
+        elif heading:
+            flush()
+            nodes.append({
+                "type": "heading",
+                "attrs": {"level": min(6, len(heading.group(1)) + 2)},
+                "content": _adf_inline(heading.group(2)),
+            })
+        elif not line.strip():
+            flush()
+        else:
+            flush()
+            nodes.append({"type": "paragraph", "content": _adf_inline(line.strip())})
+    flush()
+    return nodes or [{"type": "paragraph", "content": [{"type": "text", "text": "-"}]}]
+
+
 @app.get("/api/jira/status")
 def jira_status(authorization: str | None = Header(default=None)):
     require_user(authorization)
@@ -714,9 +779,9 @@ def jira_ticket(body: JiraTicketBody, authorization: str | None = Header(default
                 "version": 1,
                 "content": (
                     [_adf_heading("Question")]
-                    + _adf(question)
+                    + _md_to_adf(question)
                     + [_adf_heading("Answer")]
-                    + _adf(answer)
+                    + _md_to_adf(answer)
                     + _adf(meta)
                 ),
             },

@@ -665,6 +665,18 @@ r = client.post("/api/jira/ticket",
                 headers=H)
 assert r.status_code == 200, r.text
 assert jira_captured["json"]["fields"]["reporter"] == {"accountId": "acc-9"}, jira_captured
+# description keeps the answer's formatting (bold/list as real ADF)
+# and drops the chat citation markers
+import json as _json
+jira_captured.clear()
+r = client.post("/api/jira/ticket",
+                json={"question": "What changed?",
+                      "answer": "Wi-Fi 7 is **supported** [1].\n* **Mesh:** expanded coverage [1], [4]\n* Uses `MDI` agent"},
+                headers=H)
+assert r.status_code == 200, r.text
+_desc = _json.dumps(jira_captured["json"]["fields"]["description"])
+assert "bulletList" in _desc and '"strong"' in _desc and '"code"' in _desc, _desc
+assert "[1]" not in _desc and "[4]" not in _desc, _desc
 main.requests.get = _prev_get_for_jira
 os.environ["JIRA_COMPONENTS"], os.environ["JIRA_AFFECTS_VERSIONS"] = _saved_c, _saved_v
 
