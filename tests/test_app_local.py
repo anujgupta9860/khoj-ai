@@ -566,4 +566,77 @@ assert rpc_sent["params"]["message"]["parts"][0]["text"] == "what is in doc.md?"
 assert agent_calls[0][2]["Authorization"] == "Bearer whatever"  # caller token forwarded
 main.requests.post = _real_post
 
+# --- document delete: chunks + original + filter + record all go --------
+del_calls = []
+kf_deleted = []
+
+
+class FakeStorage2(FakeStorage):
+    def delete(self, key):
+        blobs.pop(key, None)
+
+
+main.get_storage = lambda: FakeStorage2()
+blobs["users/user-123/mine.md"] = ("str", b"# mine")
+
+
+def delete_post(url, json=None, files=None, headers=None, timeout=None):
+    from urllib.parse import urlsplit
+    path = urlsplit(url).path
+    if path == "/documents/delete-by-filename":
+        del_calls.append(json["filename"])
+        if json["filename"].endswith("fail.md"):
+            return Resp({"error": "boom"}, status=500)
+        return Resp({"success": True, "deleted_chunks": 3})
+    if path == "/knowledge-filter/search":
+        return Resp({"results": [{
+            "id": "kf-9", "name": "mine",
+            "description": "Uploaded via Khoj: mine.md",
+            "queryData": {"filters": {"data_sources": [MINE_NAME]}},
+        }]})
+    raise AssertionError(f"unexpected POST {path}")
+
+
+def fake_delete(url, timeout=None):
+    kf_deleted.append(url)
+    return Resp({"success": True})
+
+
+_real_del = getattr(main.requests, "delete", None)
+main.requests.post = delete_post
+main.requests.delete = fake_delete
+
+r = client.request("DELETE", f"/api/documents/{MINE_ID}", headers=H)
+assert r.status_code == 200, r.text
+assert r.json()["deleted"] == MINE_ID
+assert del_calls == [MINE_NAME], del_calls
+assert kf_deleted and kf_deleted[0].endswith("/knowledge-filter/kf-9"), kf_deleted
+assert "users/user-123/mine.md" not in blobs
+assert all(rec["docId"] != MINE_ID for rec in main._org_service.list_uploads("user:user-123"))
+r = client.get(f"/api/documents/{MINE_ID}/raw", headers=H)
+assert r.status_code == 404, r.status_code
+
+# the global corpus is not deletable from a personal view
+r = client.request("DELETE", f"/api/documents/{GLOBAL_ID}", headers=H)
+assert r.status_code == 404, r.status_code
+assert any(rec["docId"] == GLOBAL_ID for rec in main._org_service.list_uploads("org:khoj"))
+
+# unknown id -> 404; OpenRAG failure -> 502 and the record survives
+r = client.request("DELETE", "/api/documents/doc-nope", headers=H)
+assert r.status_code == 404, r.status_code
+FAIL_ID = main.document_id("users/user-123", "fail.md")
+main._org_service.record_upload({
+    "docId": FAIL_ID, "scopeKey": "user:user-123", "uid": "user-123",
+    "orgId": None, "filename": "fail.md", "openragTask": "task-0",
+    "uploadedAt": 0,
+})
+r = client.request("DELETE", f"/api/documents/{FAIL_ID}", headers=H)
+assert r.status_code == 502, r.status_code
+assert any(rec["docId"] == FAIL_ID for rec in main._org_service.list_uploads("user:user-123"))
+main._org_service.remove_upload(FAIL_ID)
+
+main.requests.post = _real_post
+if _real_del is not None:
+    main.requests.delete = _real_del
+
 print("ALL LOCAL TESTS PASSED")

@@ -243,6 +243,10 @@ class SqliteOrgService:
             ).fetchall()
         return [json.loads(r[0]) for r in rows]
 
+    def remove_upload(self, doc_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM uploads WHERE doc_id = ?", (doc_id,))
+
     def list_all_uploads(self, limit: int = 1000) -> list:
         with self._connect() as conn:
             rows = conn.execute(
@@ -417,6 +421,9 @@ class InMemoryOrgService:
 
     def list_uploads(self, scope_key: str) -> list:
         return [dict(r) for r in self.uploads.values() if r.get("scopeKey") == scope_key]
+
+    def remove_upload(self, doc_id: str) -> None:
+        self.uploads.pop(doc_id, None)
 
     def list_all_uploads(self, limit: int = 1000) -> list:
         return [dict(r) for r in self.uploads.values()][:limit]

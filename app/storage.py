@@ -48,6 +48,12 @@ class LocalStorage:
         except OSError:
             return None
 
+    def delete(self, key: str) -> None:
+        try:
+            os.remove(self._path(key))
+        except OSError:
+            pass
+
 
 class GcsStorage:
     backend = "gcs"
@@ -70,6 +76,14 @@ class GcsStorage:
             return blob.download_as_bytes()
         except Exception:
             return None
+
+    def delete(self, key: str) -> None:
+        try:
+            blob = self._bucket.blob(key)
+            if blob.exists():
+                blob.delete()
+        except Exception:
+            pass
 
 
 _storage = None

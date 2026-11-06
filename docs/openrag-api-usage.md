@@ -5,7 +5,7 @@ OpenRAG backend in-cluster at `OPENRAG_URL` (default `http://openrag-backend:800
 **unprefixed** routes — the backend serves no `/api/*` paths; that prefix exists only on
 OpenRAG's own frontend proxy.*
 
-## The complete list — 5 endpoints, 2 callers
+## The complete list — 7 endpoints, 2 callers
 
 | # | OpenRAG API | Called from (code) | Used for |
 |---|---|---|---|
@@ -14,6 +14,8 @@ OpenRAG's own frontend proxy.*
 | 3 | `POST /knowledge-filter` | Web — `_create_knowledge_filter()` in `app/main.py` | Register the document in OpenRAG's Knowledge tab |
 | 4 | `GET /files` | Web — `_openrag_files()` in `app/main.py` | Document list + readiness (which files are indexed, chunk counts) |
 | 5 | `POST /search` | Web — `_openrag_search()` in `app/main.py`; Agent — `_openrag_chunks()` in `agent/main.py` | All retrieval: Khoj search UI **and** every chat retrieval (seed + tool loop) |
+| 6 | `POST /documents/delete-by-filename` | Web — `delete_document()` in `app/main.py` | Delete a document's indexed chunks (UI Delete button) |
+| 7 | `POST /knowledge-filter/search` + `DELETE /knowledge-filter/{id}` | Web — `_delete_knowledge_filter()` in `app/main.py` | Remove the document's Knowledge-tab filter on delete (best-effort) |
 
 That is the entire integration surface. Everything else Khoj does — orgs, memberships,
 invites, upload records, chat history, metrics — lives in SQLite + the originals storage backend and never touches

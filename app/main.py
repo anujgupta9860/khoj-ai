@@ -721,6 +721,102 @@ def document_raw(doc_id: str, authorization: str | None = Header(default=None)):
     return Response(content=data, media_type=mime)
 
 
+def _delete_knowledge_filter(openrag_name: str, filename: str) -> None:
+    """Best-effort: remove the per-document OpenRAG knowledge filter
+    created at upload time, so a deleted document also leaves OpenRAG's
+    Knowledge tab. Matches the filter by its data_sources or by the
+    exact 'Uploaded via Khoj' description. Never fails the delete."""
+    display = os.path.splitext(filename)[0] or filename
+    try:
+        resp = requests.post(
+            f"{OPENRAG_URL}/knowledge-filter/search",
+            json={"query": display, "limit": 25},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return
+        candidates = []
+        stack = [resp.json()]
+        while stack:
+            cur = stack.pop()
+            if isinstance(cur, dict):
+                if "id" in cur and ("queryData" in cur or "name" in cur):
+                    candidates.append(cur)
+                stack.extend(cur.values())
+            elif isinstance(cur, list):
+                stack.extend(cur)
+        for entry in candidates:
+            qd = entry.get("queryData") or entry.get("query_data") or {}
+            sources = ((qd.get("filters") or {}).get("data_sources")) or []
+            if openrag_name in sources or entry.get("description") == (
+                f"Uploaded via Khoj: {filename}"
+            ):
+                try:
+                    requests.delete(
+                        f"{OPENRAG_URL}/knowledge-filter/{entry['id']}",
+                        timeout=15,
+                    )
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+@app.delete("/api/documents/{doc_id}")
+def delete_document(
+    doc_id: str,
+    orgId: str | None = None,
+    authorization: str | None = Header(default=None),
+):
+    """Delete one document from the caller's corpus (or, with orgId, a
+    business corpus they admin — the same gate as upload). Removes the
+    OpenRAG chunks, the stored original, the knowledge filter, and the
+    upload record. The global corpus is only deletable from the
+    platform org's own view, by its admins."""
+    user = require_user(authorization)
+    if orgId:
+        org_role(user, orgId, allowed=UPLOAD_ROLES)
+        org_active(user, orgId)
+    scope, scope_key = scope_of(user, orgId)
+    record = None
+    for rec in org_service().list_uploads(scope_key):
+        if rec.get("docId") == doc_id:
+            record = rec
+            break
+    if record is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    filename = record.get("filename", "")
+    or_name = openrag_filename(doc_id, filename)
+    resp = requests.post(
+        f"{OPENRAG_URL}/documents/delete-by-filename",
+        json={"filename": or_name},
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Index delete failed, nothing was removed: {resp.text[:200]}",
+        )
+    _delete_knowledge_filter(or_name, filename)
+    try:
+        get_storage().delete(f"{scope}/{filename}")
+    except Exception:
+        pass
+    org_service().remove_upload(doc_id)
+    _files_cache["at"] = 0.0
+    log_event(
+        kind="delete",
+        uid=user["uid"],
+        email=user.get("email", ""),
+        orgId=orgId,
+        query=filename,
+        results=None,
+        latencyMs=None,
+        source="web",
+    )
+    return {"deleted": doc_id, "title": filename}
+
+
 # --- Businesses (organizations) ---------------------------------------------
 
 class OrgBody(BaseModel):

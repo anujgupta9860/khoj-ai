@@ -93,6 +93,9 @@
   pre.code { overflow: auto; background: var(--muted); padding: 14px; border-radius: 10px; font-size: 13px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 
   .docrow { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--border); color: var(--fg); }
+  .docactions { display: inline-flex; align-items: center; gap: 8px; }
+  .docdel { background: none; border: 1px solid var(--border); color: var(--muted-fg); border-radius: 8px; padding: 3px 10px; font-size: 12.5px; cursor: pointer; }
+  .docdel:hover { color: #b91c1c; border-color: #b91c1c; }
   /* ---------- Auth ---------- */
   #authview { max-width: 400px; margin: 9vh auto 0; }
   #authview .logo { text-align: center; padding-bottom: 6px; }
@@ -682,15 +685,35 @@ async function loadDocs() {
   const resp = await fetch("/api/documents" + qs, { headers: { Authorization: "Bearer " + (await token()) } });
   if (!resp.ok) return;
   const docs = (await resp.json()).documents || [];
+  window._docsById = {};
+  docs.forEach((d) => { window._docsById[d.id] = d.title; });
   const chip = (d) => d.status === "ready" ? `<span class="chip ok">ready</span>`
     : d.status === "failed" ? `<span class="chip bad">failed</span>` : `<span class="chip wait">indexing</span>`;
+  const del = (d) => d.corpus === "own" ? `<button class="docdel" data-doc="${d.id}">Delete</button>` : "";
   $("doclist").innerHTML = docs.length
     ? docs.map((d) =>
-        `<div class="docrow"><span>${d.title}${d.error ? ` <span class="muted">(${d.error})</span>` : ""}</span>${chip(d)}</div>`
+        `<div class="docrow"><span>${d.title}${d.error ? ` <span class="muted">(${d.error})</span>` : ""}</span><span class="docactions">${chip(d)}${del(d)}</span></div>`
       ).join("")
     : "No documents yet — upload your first one above.";
   if (docs.some((d) => d.status === "indexing")) setTimeout(loadDocs, 10000);
 }
+
+$("doclist").addEventListener("click", async (e) => {
+  const btn = e.target.closest(".docdel");
+  if (!btn) return;
+  const id = btn.getAttribute("data-doc");
+  const title = (window._docsById || {})[id] || "this document";
+  if (!confirm(`Delete "${title}"? This removes the document, its stored original, and its indexed chunks. This cannot be undone.`)) return;
+  btn.disabled = true;
+  const orgId = currentOrg();
+  const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : "";
+  const resp = await fetch(`/api/documents/${encodeURIComponent(id)}` + qs, {
+    method: "DELETE",
+    headers: { Authorization: "Bearer " + (await token()) },
+  });
+  if (resp.ok) { loadDocs(); }
+  else { btn.disabled = false; alert("Could not delete: " + (await resp.text())); }
+});
 
 async function doSearch() {
   const q = $("q").value.trim();
