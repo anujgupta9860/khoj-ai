@@ -1,7 +1,10 @@
 image: langflowai/openrag-frontend:latest
 backendHost: openrag-backend
 backendPort: "8000"
-backendSsl: "false"
+# Leave EMPTY (unset): the published frontend image reads this
+# variable with raw truthiness, so even the string "false" forces
+# HTTPS against the plain-HTTP backend. Unset = plain HTTP.
+backendSsl: ""
 ingress:
   enabled: true
   host: "34.102.202.103.nip.io"  # public hostname (nip.io wildcard DNS -> the LB IP); the template also keeps a hostless catch-all rule, so the bare IP keeps working

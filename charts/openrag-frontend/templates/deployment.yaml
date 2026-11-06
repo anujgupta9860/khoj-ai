@@ -24,6 +24,8 @@ spec:
             # (found live on first GKE install).
             - { name: OPENRAG_BACKEND_HOST, value: {{ .Values.backendHost }} }
             - { name: OPENRAG_BACKEND_PORT, value: {{ .Values.backendPort | quote }} }
+            {{- if .Values.backendSsl }}
             - { name: OPENRAG_BACKEND_SSL, value: {{ .Values.backendSsl | quote }} }
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

@@ -195,7 +195,13 @@ services:
       <<: *internal-env
       OPENRAG_BACKEND_HOST: openrag-backend
       OPENRAG_BACKEND_PORT: "8000"
-      OPENRAG_BACKEND_SSL: "false"
+      # OPENRAG_BACKEND_SSL must stay UNSET for the published frontend
+      # image: its bundled proxy reads the variable with raw truthiness
+      # (process.env.OPENRAG_BACKEND_SSL || false), so the string
+      # "false" is truthy and forces HTTPS against the plain-HTTP
+      # backend (ERR_SSL_WRONG_VERSION_NUMBER). Unset = plain HTTP.
+      # (The upstream source's === "true" check is not what the
+      # current image ships.)
     ports:
       - "${OPENRAG_FRONTEND_PORT:-3000}:3000"
 

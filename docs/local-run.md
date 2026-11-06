@@ -237,3 +237,18 @@ docker exec khoj-openrag-frontend sh -c 'grep -o ".\{0,120\}OPENRAG_BACKEND_SSL.
 The snippet shows exactly what the bundle compares against — a
 `"true"` equality, a default-true form, or a value sourced from a
 bundled config object rather than the process environment.
+
+### Resolution (found 2026-11-06)
+
+Root cause: the currently published `langflowai/openrag-frontend`
+image bundles a proxy that reads the flag with raw truthiness —
+`process.env.OPENRAG_BACKEND_SSL || false` — instead of the upstream
+source's `=== "true"` comparison (the bundle also hardcodes port
+8000). Any set value, including the string `"false"`, is truthy, so
+the proxy dialed HTTPS against the plain-HTTP backend. The fix is to
+leave `OPENRAG_BACKEND_SSL` UNSET: docker-compose.yml no longer sets
+it for the frontend, and the GKE chart only emits it when
+`backendSsl` is non-empty (values default now `""`). An older image
+pull on GKE still carries the correct comparison, which is why the
+same `"false"` string works there — a re-pull of `latest` would have
+broken it the same way.
