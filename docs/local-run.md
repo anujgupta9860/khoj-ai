@@ -226,3 +226,14 @@ docker exec khoj-openrag-frontend sh -c 'grep -c OPENRAG_BACKEND_SSL "/tmp/openr
 - `0` -> the value was compiled into the published image at build
   time and the compose setting cannot reach it; build the frontend
   from source instead of pulling the published image.
+
+If the count is `1` yet the process still dials TLS, print the
+compiled comparison itself:
+
+```
+docker exec khoj-openrag-frontend sh -c 'grep -o ".\{0,120\}OPENRAG_BACKEND_SSL.\{0,200\}" "/app/.next/server/app/api/[...path]/route.js"'
+```
+
+The snippet shows exactly what the bundle compares against — a
+`"true"` equality, a default-true form, or a value sourced from a
+bundled config object rather than the process environment.
