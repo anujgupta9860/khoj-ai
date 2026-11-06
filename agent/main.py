@@ -33,6 +33,16 @@ def clean_snippet(text: str) -> str:
     entities (&nbsp;). Strip both so answers read as plain prose."""
     return " ".join(html.unescape(_TAG_RE.sub(" ", text or "")).split())
 
+
+_CITE_RE = re.compile(r"(?:\s*\[\d+\])(?:\s*,\s*\[\d+\])*")
+
+
+def _strip_citations(text: str) -> str:
+    """Answers cite the seeded excerpts as [1], [2]... - the markers
+    are scaffolding for grounding, not reading material. The sources
+    still travel separately in the response metadata."""
+    return _CITE_RE.sub("", text or "")
+
 import requests
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -713,6 +723,7 @@ def _handle_message(params: dict, user: dict) -> dict:
     queries.append(text)
     sources = search_snippets(queries, user, org_id)
     answer, extra_titles = model_answer(text, sources, history, user, org_id)
+    answer = _strip_citations(answer)
     source_titles = [s["title"] for s in sources]
     for t in extra_titles:
         if t not in source_titles:
