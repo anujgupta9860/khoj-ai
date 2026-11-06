@@ -592,6 +592,70 @@ class JiraTicketBody(BaseModel):
     question: str
     answer: str
     orgId: str | None = None
+    # Values the user picked when the UI prompted for the project's
+    # required fields: {fieldKey: name} or {fieldKey: [names]}.
+    extraFields: dict | None = None
+
+
+@app.get("/api/jira/fields")
+def jira_fields(authorization: str | None = Header(default=None)):
+    """Required create-fields the ticket does NOT already cover.
+
+    Reads the project's create metadata so the UI can prompt the user
+    for exactly what this project demands (Components, Affects
+    versions, ...) instead of the create failing with a 400. Fields
+    Khoj fills itself, and fields covered by config
+    (JIRA_COMPONENTS / JIRA_AFFECTS_VERSIONS), are never returned.
+    """
+    require_user(authorization)
+    cfg = _jira_config()
+    if not cfg:
+        return {"enabled": False, "fields": []}
+    try:
+        resp = requests.get(
+            f"{cfg['base']}/rest/api/3/issue/createmeta",
+            params={
+                "projectKeys": cfg["project"],
+                "issuetypeNames": cfg["issue_type"],
+                "expand": "projects.issuetypes.fields",
+            },
+            auth=(cfg["email"], cfg["token"]),
+            headers={"Accept": "application/json"},
+            timeout=20,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Jira request failed: {e}")
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Jira returned {resp.status_code}: {resp.text[:300]}",
+        )
+    projects = (resp.json() or {}).get("projects") or []
+    fields_meta = {}
+    if projects:
+        types = projects[0].get("issuetypes") or []
+        if types:
+            fields_meta = types[0].get("fields") or {}
+    covered = {"project", "issuetype", "summary", "description", "attachment"}
+    if cfg["components"]:
+        covered.add("components")
+    if cfg["versions"]:
+        covered.add("versions")
+    out = []
+    for key, meta in fields_meta.items():
+        if key in covered or not meta.get("required"):
+            continue
+        allowed = [
+            {"id": str(v.get("id", "")), "name": v.get("name") or v.get("value") or ""}
+            for v in (meta.get("allowedValues") or [])
+        ]
+        out.append({
+            "key": key,
+            "name": meta.get("name") or key,
+            "multi": (meta.get("schema") or {}).get("type") == "array",
+            "allowedValues": allowed,
+        })
+    return {"enabled": True, "fields": out}
 
 
 @app.post("/api/jira/ticket")
@@ -629,6 +693,20 @@ def jira_ticket(body: JiraTicketBody, authorization: str | None = Header(default
         fields["components"] = [{"name": n} for n in cfg["components"]]
     if cfg["versions"]:
         fields["versions"] = [{"name": n} for n in cfg["versions"]]
+    # User-prompted values for any other required fields (see
+    # /api/jira/fields): lists become [{"name": ...}], a single value
+    # becomes {"name": ...}. Core fields can never be overridden.
+    for k, v in (body.extraFields or {}).items():
+        if k in ("project", "issuetype", "summary", "description"):
+            continue
+        if not re.fullmatch(r"[a-zA-Z0-9_]+", k or ""):
+            continue
+        if isinstance(v, list):
+            names = [str(x).strip() for x in v if str(x).strip()]
+            if names:
+                fields[k] = [{"name": n} for n in names]
+        elif v is not None and str(v).strip():
+            fields[k] = {"name": str(v).strip()}
     payload = {"fields": fields}
     try:
         resp = requests.post(

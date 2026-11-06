@@ -600,6 +600,57 @@ assert r.json()["key"] == "CCS-42", r.json()
 _jf = jira_captured["json"]["fields"]
 assert _jf["components"] == [{"name": "Platform"}, {"name": "Cloud"}], _jf
 assert _jf["versions"] == [{"name": "R24.4"}], _jf
+
+# --- /api/jira/fields: prompt only for required fields config doesn't cover
+CREATEMETA = {"projects": [{"issuetypes": [{"fields": {
+    "summary": {"required": True, "name": "Summary", "allowedValues": []},
+    "components": {"required": True, "name": "Components", "schema": {"type": "array"},
+                   "allowedValues": [{"id": "1", "name": "Platform"}, {"id": "2", "name": "Cloud"}]},
+    "versions": {"required": True, "name": "Affects versions", "schema": {"type": "array"},
+                 "allowedValues": [{"id": "3", "name": "R24.4"}]},
+    "labels": {"required": False, "name": "Labels", "allowedValues": []},
+}}]}]}
+_prev_get_for_jira = main.requests.get
+
+
+def jira_get(url, params=None, headers=None, timeout=None, **kw):
+    if "createmeta" in url:
+        class R:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return CREATEMETA
+
+        return R()
+    return _prev_get_for_jira(url, params=params, headers=headers, timeout=timeout, **kw)
+
+
+main.requests.get = jira_get
+# config covers both fields -> nothing to prompt for
+r = client.get("/api/jira/fields", headers=H)
+assert r.status_code == 200 and r.json()["fields"] == [], r.text
+# drop the config -> both required fields come back for prompting
+_saved_c, _saved_v = os.environ.pop("JIRA_COMPONENTS"), os.environ.pop("JIRA_AFFECTS_VERSIONS")
+r = client.get("/api/jira/fields", headers=H)
+assert r.status_code == 200, r.text
+_got = {f["key"]: f for f in r.json()["fields"]}
+assert set(_got) == {"components", "versions"}, _got
+assert _got["components"]["multi"] is True
+assert [v["name"] for v in _got["versions"]["allowedValues"]] == ["R24.4"]
+# prompted values land in the create payload
+jira_captured.clear()
+r = client.post("/api/jira/ticket",
+                json={"question": "Q?", "answer": "A.",
+                      "extraFields": {"components": ["Cloud"], "versions": ["R24.4"]}},
+                headers=H)
+assert r.status_code == 200, r.text
+_jf = jira_captured["json"]["fields"]
+assert _jf["components"] == [{"name": "Cloud"}], _jf
+assert _jf["versions"] == [{"name": "R24.4"}], _jf
+main.requests.get = _prev_get_for_jira
+os.environ["JIRA_COMPONENTS"], os.environ["JIRA_AFFECTS_VERSIONS"] = _saved_c, _saved_v
+
 main.requests.post = _prev_post_for_jira
 for _k in ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN", "JIRA_PROJECT_KEY",
            "JIRA_COMPONENTS", "JIRA_AFFECTS_VERSIONS"):

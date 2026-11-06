@@ -129,6 +129,9 @@
   .ticketbtn { font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: #fff; color: var(--fg); cursor: pointer; }
   .ticketbtn:hover:not(:disabled) { border-color: var(--accent); }
   .ticketbtn:disabled { opacity: .55; cursor: default; }
+  .jiraform { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+  .jiraform label { font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  .jiraform select, .jiraform input { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
   .msg-actions a { font-size: 12.5px; color: var(--accent); text-decoration: none; font-weight: 600; }
   #chatfoot { padding: 8px max(18px, calc(50% - 384px)) 14px; background: #fff; }
   #chatfoot .row { align-items: center; border: 1px solid #d9d9d9; border-radius: 28px; padding: 5px 5px 5px 18px; background: #fff; box-shadow: 0 6px 20px -8px rgba(0,0,0,.12); }
@@ -819,6 +822,82 @@ async function jiraEnabled() {
   } catch (e) { _jiraEnabled = false; }
   return _jiraEnabled;
 }
+async function submitJiraTicket(btn, question, answer, orgId, extraFields, onError) {
+  try {
+    const r = await fetch("/api/jira/ticket", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + (await token()) },
+      body: JSON.stringify({ question: question, answer: answer, orgId: orgId, extraFields: extraFields }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    const a = document.createElement("a");
+    a.href = d.url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.textContent = "🎫 " + d.key;
+    btn.replaceWith(a);
+    return true;
+  } catch (e) {
+    $("chaterr").textContent = "Jira ticket failed: " + e.message;
+    if (onError) onError();
+    return false;
+  }
+}
+
+// When the project requires fields Khoj doesn't supply (Components,
+// Affects versions, ...), prompt for them inline instead of letting
+// the create fail: one dropdown per field (free text when the
+// project lists no allowed values), then a single create call.
+function showJiraForm(row, fields, question, answer, orgId, btn) {
+  const form = document.createElement("div");
+  form.className = "jiraform";
+  const inputs = {};
+  for (const f of fields) {
+    const lab = document.createElement("label");
+    lab.textContent = f.name + ": ";
+    let inp;
+    if (f.allowedValues && f.allowedValues.length) {
+      inp = document.createElement("select");
+      for (const v of f.allowedValues) {
+        const o = document.createElement("option");
+        o.value = v.name;
+        o.textContent = v.name;
+        inp.appendChild(o);
+      }
+    } else {
+      inp = document.createElement("input");
+      inp.type = "text";
+    }
+    inputs[f.key] = { el: inp, multi: !!f.multi };
+    lab.appendChild(inp);
+    form.appendChild(lab);
+  }
+  const go = document.createElement("button");
+  go.className = "ticketbtn";
+  go.textContent = "Create ticket";
+  const cancel = document.createElement("button");
+  cancel.className = "ticketbtn";
+  cancel.textContent = "Cancel";
+  cancel.onclick = () => { form.remove(); btn.disabled = false; btn.textContent = "🎫 Create Jira ticket"; };
+  go.onclick = async () => {
+    const extra = {};
+    for (const k in inputs) {
+      const val = inputs[k].el.value.trim();
+      if (val) extra[k] = inputs[k].multi ? [val] : val;
+    }
+    go.disabled = true;
+    go.textContent = "Creating…";
+    const ok = await submitJiraTicket(btn, question, answer, orgId, extra,
+      () => { go.disabled = false; go.textContent = "Create ticket"; });
+    if (ok) form.remove();
+  };
+  form.appendChild(go);
+  form.appendChild(cancel);
+  row.appendChild(form);
+  chatScroll();
+}
+
 async function attachTicketButton(question, answer, orgId) {
   if (!(await jiraEnabled())) return;
   const row = document.createElement("div");
@@ -828,26 +907,27 @@ async function attachTicketButton(question, answer, orgId) {
   btn.textContent = "🎫 Create Jira ticket";
   btn.onclick = async () => {
     btn.disabled = true;
-    btn.textContent = "Creating…";
+    btn.textContent = "Checking…";
     try {
-      const r = await fetch("/api/jira/ticket", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + (await token()) },
-        body: JSON.stringify({ question: question, answer: answer, orgId: orgId }),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const d = await r.json();
-      const a = document.createElement("a");
-      a.href = d.url;
-      a.target = "_blank";
-      a.rel = "noopener";
-      a.textContent = "🎫 " + d.key;
-      btn.replaceWith(a);
+      const fr = await fetch("/api/jira/fields", { headers: { Authorization: "Bearer " + (await token()) } });
+      if (!fr.ok) throw new Error(await fr.text());
+      const fd = await fr.json();
+      if (fd.fields && fd.fields.length) {
+        btn.textContent = "🎫 Create Jira ticket";
+        showJiraForm(row, fd.fields, question, answer, orgId, btn);
+        return;
+      }
     } catch (e) {
+      $("chaterr").textContent = "Jira ticket failed: " + e.message;
       btn.disabled = false;
       btn.textContent = "🎫 Create Jira ticket";
-      $("chaterr").textContent = "Jira ticket failed: " + e.message;
+      return;
     }
+    btn.textContent = "Creating…";
+    await submitJiraTicket(btn, question, answer, orgId, {}, () => {
+      btn.disabled = false;
+      btn.textContent = "🎫 Create Jira ticket";
+    });
   };
   row.appendChild(btn);
   $("chatlog").appendChild(row);
