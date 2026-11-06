@@ -265,6 +265,8 @@ services:
       JIRA_EMAIL: ${JIRA_EMAIL:-}
       JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-}
       JIRA_ISSUE_TYPE: ${JIRA_ISSUE_TYPE:-Task}
+      JIRA_COMPONENTS: ${JIRA_COMPONENTS:-}
+      JIRA_AFFECTS_VERSIONS: ${JIRA_AFFECTS_VERSIONS:-}
       JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
     volumes:
       - khoj-data:/data

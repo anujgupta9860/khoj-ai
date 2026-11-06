@@ -540,12 +540,21 @@ def _jira_config() -> dict | None:
     project = os.environ.get("JIRA_PROJECT_KEY", "")
     if not (base and email and token and project):
         return None
+
+    def _names(env: str) -> list:
+        return [p.strip() for p in os.environ.get(env, "").split(",") if p.strip()]
+
     return {
         "base": base,
         "email": email,
         "token": token,
         "project": project,
         "issue_type": os.environ.get("JIRA_ISSUE_TYPE", "Task"),
+        # Some projects (company-managed ones especially) REQUIRE a
+        # component and/or an affects-version on create. Optional env,
+        # comma-separated names, sent only when configured.
+        "components": _names("JIRA_COMPONENTS"),
+        "versions": _names("JIRA_AFFECTS_VERSIONS"),
     }
 
 
@@ -600,8 +609,7 @@ def jira_ticket(body: JiraTicketBody, authorization: str | None = Header(default
         summary = summary[:197] + "..."
     scope = "an organization corpus" if body.orgId else "personal documents"
     meta = f"Asked by {user.get('email', '')} via Khoj chat ({scope})."
-    payload = {
-        "fields": {
+    fields = {
             "project": {"key": cfg["project"]},
             "summary": summary,
             "issuetype": {"name": cfg["issue_type"]},
@@ -616,8 +624,12 @@ def jira_ticket(body: JiraTicketBody, authorization: str | None = Header(default
                     + _adf(meta)
                 ),
             },
-        }
     }
+    if cfg["components"]:
+        fields["components"] = [{"name": n} for n in cfg["components"]]
+    if cfg["versions"]:
+        fields["versions"] = [{"name": n} for n in cfg["versions"]]
+    payload = {"fields": fields}
     try:
         resp = requests.post(
             f"{cfg['base']}/rest/api/3/issue",

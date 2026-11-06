@@ -53,6 +53,8 @@ jira:
   email: "anuj.gupta9860@gmail.com"   # Atlassian account email the API token belongs to
   projectKey: "RAG"                   # default project for new tickets (the "Rag" project on this site)
   issueType: "Task"                   # issue type created by the button
+  components: ""                      # comma-separated names, if the project requires Components on create
+  affectsVersions: ""                 # comma-separated names, if the project requires Affects versions on create
   secretName: khoj-jira               # k8s Secret the ExternalSecret creates
   externalSecret:
     enabled: true

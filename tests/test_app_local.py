@@ -564,6 +564,47 @@ rpc_sent = agent_calls[0][1]
 assert rpc_sent["method"] == "message/send"
 assert rpc_sent["params"]["message"]["parts"][0]["text"] == "what is in doc.md?"
 assert agent_calls[0][2]["Authorization"] == "Bearer whatever"  # caller token forwarded
+# --- Jira ticket: configured components / affects-versions ride along --
+os.environ.update({
+    "JIRA_BASE_URL": "https://sandbox.example.atlassian.net",
+    "JIRA_EMAIL": "u@example.com",
+    "JIRA_API_TOKEN": "tok",
+    "JIRA_PROJECT_KEY": "CCS",
+    "JIRA_COMPONENTS": "Platform, Cloud",
+    "JIRA_AFFECTS_VERSIONS": "R24.4",
+})
+jira_captured = {}
+_prev_post_for_jira = main.requests.post
+
+
+def jira_post(url, json=None, files=None, headers=None, timeout=None, **kw):
+    if url.endswith("/rest/api/3/issue"):
+        jira_captured["url"] = url
+        jira_captured["json"] = json
+
+        class R:
+            status_code = 201
+            text = ""
+
+            def json(self):
+                return {"key": "CCS-42"}
+
+        return R()
+    return _prev_post_for_jira(url, json=json, files=files, headers=headers, timeout=timeout, **kw)
+
+
+main.requests.post = jira_post
+r = client.post("/api/jira/ticket", json={"question": "What is EXOS?", "answer": "A router OS."}, headers=H)
+assert r.status_code == 200, r.text
+assert r.json()["key"] == "CCS-42", r.json()
+_jf = jira_captured["json"]["fields"]
+assert _jf["components"] == [{"name": "Platform"}, {"name": "Cloud"}], _jf
+assert _jf["versions"] == [{"name": "R24.4"}], _jf
+main.requests.post = _prev_post_for_jira
+for _k in ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN", "JIRA_PROJECT_KEY",
+           "JIRA_COMPONENTS", "JIRA_AFFECTS_VERSIONS"):
+    os.environ.pop(_k, None)
+
 main.requests.post = _real_post
 
 # --- document delete: chunks + original + filter + record all go --------

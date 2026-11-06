@@ -53,6 +53,10 @@ spec:
               value: {{ .Values.jira.projectKey | quote }}
             - name: JIRA_ISSUE_TYPE
               value: {{ .Values.jira.issueType | quote }}
+            - name: JIRA_COMPONENTS
+              value: {{ .Values.jira.components | quote }}
+            - name: JIRA_AFFECTS_VERSIONS
+              value: {{ .Values.jira.affectsVersions | quote }}
             - name: JIRA_API_TOKEN
               valueFrom:
                 secretKeyRef:
