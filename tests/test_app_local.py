@@ -614,6 +614,15 @@ _prev_get_for_jira = main.requests.get
 
 
 def jira_get(url, params=None, headers=None, timeout=None, **kw):
+    if "user/search" in url:
+        class R:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return [{"accountId": "acc-9", "emailAddress": "krunal.patil@calix.com"}]
+
+        return R()
     if "createmeta" in url:
         class R:
             status_code = 200
@@ -648,6 +657,14 @@ assert r.status_code == 200, r.text
 _jf = jira_captured["json"]["fields"]
 assert _jf["components"] == [{"name": "Cloud"}], _jf
 assert _jf["versions"] == [{"name": "R24.4"}], _jf
+# a prompted Reporter resolves through user search to an accountId
+jira_captured.clear()
+r = client.post("/api/jira/ticket",
+                json={"question": "Q?", "answer": "A.",
+                      "extraFields": {"reporter": "krunal.patil@calix.com"}},
+                headers=H)
+assert r.status_code == 200, r.text
+assert jira_captured["json"]["fields"]["reporter"] == {"accountId": "acc-9"}, jira_captured
 main.requests.get = _prev_get_for_jira
 os.environ["JIRA_COMPONENTS"], os.environ["JIRA_AFFECTS_VERSIONS"] = _saved_c, _saved_v
 

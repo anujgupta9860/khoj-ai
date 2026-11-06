@@ -597,6 +597,38 @@ class JiraTicketBody(BaseModel):
     extraFields: dict | None = None
 
 
+def _jira_user_account_id(cfg: dict, query: str) -> str:
+    """Resolve a typed email/name to a Jira accountId.
+
+    Cloud user fields (reporter, assignee) cannot be set by name or
+    email in REST v3 - only by accountId - so a prompted value has to
+    go through user search first. Exact email match wins.
+    """
+    try:
+        resp = requests.get(
+            f"{cfg['base']}/rest/api/3/user/search",
+            params={"query": query},
+            auth=(cfg["email"], cfg["token"]),
+            headers={"Accept": "application/json"},
+            timeout=20,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Jira request failed: {e}")
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Jira user lookup returned {resp.status_code}: {resp.text[:200]}",
+        )
+    users = resp.json() or []
+    if not users:
+        raise HTTPException(status_code=422, detail=f"No Jira user found for '{query}'")
+    q = query.strip().lower()
+    for u in users:
+        if (u.get("emailAddress") or "").lower() == q:
+            return u.get("accountId")
+    return users[0].get("accountId")
+
+
 @app.get("/api/jira/fields")
 def jira_fields(authorization: str | None = Header(default=None)):
     """Required create-fields the ticket does NOT already cover.
@@ -700,6 +732,12 @@ def jira_ticket(body: JiraTicketBody, authorization: str | None = Header(default
         if k in ("project", "issuetype", "summary", "description"):
             continue
         if not re.fullmatch(r"[a-zA-Z0-9_]+", k or ""):
+            continue
+        if k in ("reporter", "assignee"):
+            # User fields take an accountId, never a bare name/email.
+            raw = v[0] if isinstance(v, list) and v else v
+            if raw is not None and str(raw).strip():
+                fields[k] = {"accountId": _jira_user_account_id(cfg, str(raw).strip())}
             continue
         if isinstance(v, list):
             names = [str(x).strip() for x in v if str(x).strip()]
