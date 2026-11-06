@@ -82,11 +82,27 @@ def main():
     if LLM_PROVIDER == "ollama" or EMBEDDING_PROVIDER == "ollama":
         payload["ollama_endpoint"] = OLLAMA_ENDPOINT or "http://host.docker.internal:11434"
 
+    creds = {}
     if OPENAI_BASE_URL and (LLM_PROVIDER == "openai" or EMBEDDING_PROVIDER == "openai"):
         # OpenRAG takes a custom endpoint as the provider's api_base
         # credential; it then applies to chat AND embeddings.
-        payload["provider_credentials"] = {"openai": {"api_base": OPENAI_BASE_URL}}
+        creds.setdefault("openai", {})["api_base"] = OPENAI_BASE_URL
         print(f"[init] custom OpenAI base URL: {OPENAI_BASE_URL}", flush=True)
+    # Any other LiteLLM-native provider (e.g. "gemini" for Google AI
+    # Studio) takes its key as a provider credential. OPENAI_API_KEY
+    # doubles as the key slot: in the Gemini recipe it holds the AI
+    # Studio key. The provider NAME + bare model names keep the stored
+    # embedding-space id identical to the route search resolves.
+    for provider in {LLM_PROVIDER, EMBEDDING_PROVIDER}:
+        if provider not in ("openai", "ollama"):
+            if OPENAI_API_KEY:
+                creds.setdefault(provider, {})["api_key"] = OPENAI_API_KEY
+            else:
+                print(f"[init] WARNING: no key set for provider {provider} — "
+                      "onboarding will fail until you set OPENAI_API_KEY "
+                      "in .env and re-run this init.", flush=True)
+    if creds:
+        payload["provider_credentials"] = creds
 
     print(f"[init] onboarding: llm={LLM_PROVIDER}/{LLM_MODEL} "
           f"embedding={EMBEDDING_PROVIDER}/{EMBEDDING_MODEL}", flush=True)

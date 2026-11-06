@@ -4,6 +4,11 @@ metadata:
   name: openrag-backend
 spec:
   replicas: 1
+  # The data PVC is ReadWriteOnce: with the default RollingUpdate the new
+  # pod can never attach the volume while the old pod holds it, and the
+  # rollout deadlocks. Recreate terminates the old pod first.
+  strategy:
+    type: Recreate
   selector:
     matchLabels: { app: openrag-backend }
   template:
