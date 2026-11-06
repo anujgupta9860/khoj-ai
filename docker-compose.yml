@@ -104,6 +104,11 @@ services:
       # an internal OpenAI-compatible base URL.
       LANGFLOW_SSRF_ALLOWED_HOSTS: ${LANGFLOW_SSRF_ALLOWED_HOSTS:-}
       LANGFLOW_WORKERS: "1"
+      # OpenRAG's flows carry custom component code; with this off,
+      # Langflow substitutes its built-in components and ingestion
+      # fails ('NoneType' object has no attribute 'copy'). The GKE
+      # charts set the same flag on langflow and the backend.
+      LANGFLOW_ALLOW_CUSTOM_COMPONENTS: "true"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OLLAMA_BASE_URL: ${OLLAMA_ENDPOINT:-}
@@ -172,6 +177,7 @@ services:
       LANGFLOW_SUPERUSER: ${LANGFLOW_SUPERUSER:-langflow}
       LANGFLOW_SUPERUSER_PASSWORD: ${LANGFLOW_SUPERUSER_PASSWORD:-KhojLangflow!234}
       LANGFLOW_AUTO_LOGIN: "false"
+      LANGFLOW_ALLOW_CUSTOM_COMPONENTS: "true"
       DOCLING_SERVE_URL: http://docling:5001
       DOCLING_SERVE_VERIFY_SSL: "false"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
