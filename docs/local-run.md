@@ -186,3 +186,21 @@ docker inspect khoj-openrag-frontend --format '{{range .Config.Env}}{{println .}
   names on every service (see `x-internal-env` in docker-compose.yml);
   make sure your checkout is current (`git pull`) and recreate the
   stack so the containers pick it up.
+
+If the environment looks right, bisect the hop itself — this bypasses
+the frontend app and tries the same plain-HTTP call from inside the
+frontend container:
+
+```
+docker exec khoj-openrag-frontend node -e "fetch('http://openrag-backend:8000/files').then(r=>r.text()).then(t=>console.log('OK',t.slice(0,100))).catch(e=>console.log('ERR',e.cause&&e.cause.code))"
+```
+
+- `OK` -> the container network hop is healthy; the TLS attempt is
+  inside the frontend's own code — inspect the bundled route
+  (`.next/server/app/api/[...path]/route.js`) for the URL it builds.
+- `ERR` with the SSL code -> the plain-HTTP request is intercepted
+  between the containers; suspect the host's network stack (VPN /
+  TLS-inspecting proxy), not the app.
+- `ERR` with `ECONNREFUSED` -> the name resolved but nothing listens
+  on the backend port: the backend container is down or restarting.
+  Check `docker compose ps`, then `docker compose logs openrag-backend`.
