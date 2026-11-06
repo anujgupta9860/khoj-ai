@@ -115,6 +115,13 @@
   .msg.you { align-self: flex-end; background: var(--muted); color: var(--fg); border-bottom-right-radius: 6px; }
   .msg.bot { align-self: flex-start; background: #fff; border: 1px solid var(--border); border-bottom-left-radius: 6px; }
   .msg.thinking { opacity: .55; font-style: italic; }
+  .msg.md { white-space: normal; }
+  .msg.md p { margin: 0 0 8px; }
+  .msg.md p:last-child { margin-bottom: 0; }
+  .msg.md ul, .msg.md ol { margin: 2px 0 8px; padding-left: 20px; }
+  .msg.md li { margin: 2px 0; }
+  .msg.md .mdh { font-weight: 650; margin: 10px 0 4px; }
+  .msg.md code { background: var(--muted); border-radius: 5px; padding: 1px 5px; font-size: 13px; }
   .msg-actions { align-self: flex-start; margin-top: -6px; }
   .ticketbtn { font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: #fff; color: var(--fg); cursor: pointer; }
   .ticketbtn:hover:not(:disabled) { border-color: var(--accent); }
@@ -739,10 +746,52 @@ $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); }
 
 let chatContext = null;
 function chatScroll() { const log = $("chatlog"); log.scrollTop = log.scrollHeight; }
-function chatAdd(who, body, cls) {
+
+// Minimal, safe Markdown rendering for chat answers: the text is
+// HTML-escaped FIRST, then a small subset is applied (headings,
+// bold, italic, inline code, bullet/numbered lists, paragraphs).
+// Model output can quote arbitrary document text, so nothing raw
+// ever reaches innerHTML.
+function mdInline(s) {
+  return s
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+}
+function mdToHtml(text) {
+  const esc = String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const out = [];
+  let list = null; // "ul" | "ol" | null
+  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (const raw of esc.split("\n")) {
+    const line = raw.replace(/\s+$/, "");
+    const bullet = line.match(/^\s*[-*•]\s+(.*)$/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    const heading = line.match(/^(#{1,4})\s+(.*)$/);
+    if (bullet || numbered) {
+      const kind = bullet ? "ul" : "ol";
+      if (list !== kind) { closeList(); out.push(`<${kind}>`); list = kind; }
+      out.push(`<li>${mdInline((bullet || numbered)[1])}</li>`);
+    } else if (heading) {
+      closeList();
+      out.push(`<div class="mdh">${mdInline(heading[2])}</div>`);
+    } else if (!line.trim()) {
+      closeList();
+      out.push("");
+    } else {
+      closeList();
+      out.push(`<p>${mdInline(line)}</p>`);
+    }
+  }
+  closeList();
+  return out.join("\n");
+}
+
+function chatAdd(who, body, cls, asMarkdown) {
   const div = document.createElement("div");
   div.className = "msg " + (cls || (who === "You" ? "you" : "bot"));
-  div.textContent = body;
+  if (asMarkdown) { div.classList.add("md"); div.innerHTML = mdToHtml(body); }
+  else div.textContent = body;
   $("chatlog").appendChild(div);
   chatScroll();
   return div;
@@ -816,7 +865,7 @@ async function doChat() {
     const data = await resp.json();
     chatContext = data.contextId;
     thinking.remove();
-    chatAdd("Khoj", data.reply + (data.sources && data.sources.length ? "\n\nSources: " + data.sources.join(", ") : ""));
+    chatAdd("Khoj", data.reply + (data.sources && data.sources.length ? "\n\nSources: " + data.sources.join(", ") : ""), null, true);
     attachTicketButton(text, data.reply, currentOrg());
   } catch (e) {
     $("chaterr").textContent = "Chat failed: " + e;
