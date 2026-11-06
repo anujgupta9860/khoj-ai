@@ -258,7 +258,9 @@ services:
       KHOJ_AUTH_SECRET: ${KHOJ_AUTH_SECRET:?set KHOJ_AUTH_SECRET in .env}
       KHOJ_SUPER_ADMIN_EMAIL: ${KHOJ_SUPER_ADMIN_EMAIL:-}
       OPENRAG_URL: ${OPENRAG_URL:-http://openrag-backend:8000}
-      KHOJ_AGENT_URL: http://khoj-agent
+      # The agent listens on 8080 in its container (agent/Dockerfile
+      # PORT); a bare http://khoj-agent means port 80 -> refused.
+      KHOJ_AGENT_URL: http://khoj-agent:8080
       JIRA_BASE_URL: ${JIRA_BASE_URL:-}
       JIRA_EMAIL: ${JIRA_EMAIL:-}
       JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-}
