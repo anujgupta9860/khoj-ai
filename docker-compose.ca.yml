@@ -1,0 +1,27 @@
+# Optional override — trust an extra CA bundle inside the Khoj
+# containers. Use when outbound HTTPS from a container fails with
+# CERTIFICATE_VERIFY_FAILED because the network TLS-inspects traffic
+# with a corporate root CA: the laptop trusts that CA (it is in the
+# macOS keychain), the containers' public CA bundles do not.
+#
+#   1. Export the Mac's trusted roots (public + corporate) into the
+#      repo root:
+#        { security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain; security find-certificate -a -p /Library/Keychains/System.keychain; } > corp-ca.pem
+#   2. Re-run scripts/run-local-stack.sh — it adds this override
+#      automatically when corp-ca.pem exists.
+#
+# Manual equivalent:
+#   docker compose -f docker-compose.yml -f docker-compose.ca.yml up -d
+services:
+  khoj:
+    environment:
+      REQUESTS_CA_BUNDLE: /etc/ssl/corp-ca.pem
+      SSL_CERT_FILE: /etc/ssl/corp-ca.pem
+    volumes:
+      - ./corp-ca.pem:/etc/ssl/corp-ca.pem:ro
+  khoj-agent:
+    environment:
+      REQUESTS_CA_BUNDLE: /etc/ssl/corp-ca.pem
+      SSL_CERT_FILE: /etc/ssl/corp-ca.pem
+    volumes:
+      - ./corp-ca.pem:/etc/ssl/corp-ca.pem:ro

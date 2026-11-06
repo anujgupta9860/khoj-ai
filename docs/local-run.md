@@ -280,3 +280,22 @@ OPENRAG_VERSION=0.8.1.dev8 bash scripts/run-local-stack.sh
 ```
 
 Then retry the upload.
+
+### Jira (or any outbound HTTPS) fails with CERTIFICATE_VERIFY_FAILED
+
+Symptom: `Jira ticket failed: ... SSLError ... CERTIFICATE_VERIFY_FAILED
+unable to get local issuer certificate` — the laptop is on a network
+that TLS-inspects outbound traffic with a corporate root CA. The
+laptop trusts that CA; the containers' public CA bundles do not.
+
+Fix: export the Mac's trusted roots into the repo root, then re-run
+the stack script — it detects `corp-ca.pem` and adds the
+`docker-compose.ca.yml` override (sets REQUESTS_CA_BUNDLE /
+SSL_CERT_FILE for the khoj and khoj-agent services):
+
+```
+{ security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain; security find-certificate -a -p /Library/Keychains/System.keychain; } > corp-ca.pem
+bash scripts/run-local-stack.sh
+```
+
+`corp-ca.pem` is gitignored — it is machine-specific, never commit it.

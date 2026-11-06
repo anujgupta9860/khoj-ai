@@ -24,10 +24,20 @@ cd "$(dirname "$0")/.."
 ROOT="$PWD"
 BUCKET="${KHOJ_SETUP_BUCKET:-}"   # optional: your own private bucket
 
+# Optional corporate-CA override: when corp-ca.pem sits in the repo
+# root, the Khoj containers verify outbound HTTPS against that bundle
+# too (TLS-inspecting corporate networks — e.g. Jira failing with
+# CERTIFICATE_VERIFY_FAILED). See docker-compose.ca.yml.
+COMPOSE=(docker compose)
+if [ -f "$ROOT/corp-ca.pem" ]; then
+  COMPOSE+=(-f docker-compose.ca.yml)
+  echo "Found corp-ca.pem — Khoj containers will trust that CA bundle."
+fi
+
 cmd="${1:-up}"
 case "$cmd" in
-  down) docker compose down; exit 0 ;;
-  logs) docker compose logs -f; exit 0 ;;
+  down) "${COMPOSE[@]}" down; exit 0 ;;
+  logs) "${COMPOSE[@]}" logs -f; exit 0 ;;
   up) ;;
   *) echo "unknown command: $cmd (use: up | down | logs)" >&2; exit 2 ;;
 esac
@@ -110,7 +120,7 @@ DASHBOARDS_PORT="$(grep -E '^DASHBOARDS_PORT=' "$ROOT/.env" 2>/dev/null | tail -
 
 # --- 3. Bring the stack up --------------------------------------------------
 echo "Starting the full stack (first boot pulls/builds several GB — be patient)…"
-docker compose up --build -d || { echo "docker compose up failed" >&2; exit 1; }
+"${COMPOSE[@]}" up --build -d || { echo "docker compose up failed" >&2; exit 1; }
 
 # --- 4. Wait until the pieces answer ---------------------------------------
 wait_url() { # wait_url <url> <name> <tries>
