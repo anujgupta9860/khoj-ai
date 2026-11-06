@@ -1,3 +1,12 @@
+# Internal service names must never be routed through a proxy. On
+# corporate networks Docker Desktop can inject HTTP(S)_PROXY into
+# containers; without this, service-to-service calls (e.g. the OpenRAG
+# frontend proxying to the backend) get hijacked by the proxy and fail
+# with TLS errors such as ERR_SSL_WRONG_VERSION_NUMBER.
+x-internal-env: &internal-env
+  NO_PROXY: "localhost,127.0.0.1,openrag-backend,openrag-frontend,langflow,opensearch,dashboards,docling,khoj,khoj-agent,host.docker.internal"
+  no_proxy: "localhost,127.0.0.1,openrag-backend,openrag-frontend,langflow,opensearch,dashboards,docling,khoj,khoj-agent,host.docker.internal"
+
 # The COMPLETE Khoj stack with only Docker — Khoj web + A2A agent + the
 # full OpenRAG stack (OpenSearch, Dashboards, Docling, Langflow, backend,
 # frontend), wired exactly like the GKE deployment (same images, same
@@ -29,6 +38,7 @@ services:
     container_name: khoj-opensearch
     restart: unless-stopped
     environment:
+      <<: *internal-env
       discovery.type: single-node
       OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_PASSWORD:-KhojLocal!234}
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:-KhojLocal!234}
@@ -54,6 +64,7 @@ services:
     depends_on:
       - opensearch
     environment:
+      <<: *internal-env
       OPENSEARCH_HOSTS: '["https://opensearch:9200"]'
       OPENSEARCH_USERNAME: admin
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:-KhojLocal!234}
@@ -80,6 +91,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
+      <<: *internal-env
       LANGFLOW_CONFIG_DIR: /app/langflow-data
       LANGFLOW_DATABASE_URL: sqlite:////app/langflow-data/langflow.db
       LANGFLOW_SUPERUSER: ${LANGFLOW_SUPERUSER:-langflow}
@@ -146,6 +158,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
+      <<: *internal-env
       OPENSEARCH_HOST: opensearch
       OPENSEARCH_PORT: "9200"
       OPENSEARCH_USERNAME: admin
@@ -179,6 +192,7 @@ services:
     depends_on:
       - openrag-backend
     environment:
+      <<: *internal-env
       OPENRAG_BACKEND_HOST: openrag-backend
       OPENRAG_BACKEND_PORT: "8000"
       OPENRAG_BACKEND_SSL: "false"
@@ -195,6 +209,7 @@ services:
     depends_on:
       - openrag-backend
     environment:
+      <<: *internal-env
       OPENRAG_URL: http://openrag-backend:8000
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-openai}
@@ -215,6 +230,7 @@ services:
     ports:
       - "${KHOJ_PORT:-8081}:8080"
     environment:
+      <<: *internal-env
       KHOJ_DATA_DIR: /data
       KHOJ_STORAGE: ${KHOJ_STORAGE:-local}
       KHOJ_BUCKET: ${KHOJ_BUCKET:-}
@@ -239,6 +255,7 @@ services:
     container_name: khoj-agent
     restart: unless-stopped
     environment:
+      <<: *internal-env
       KHOJ_WEB_URL: http://khoj:8080
       KHOJ_AUTH_SECRET: ${KHOJ_AUTH_SECRET:?set KHOJ_AUTH_SECRET in .env}
       OPENRAG_URL: ${OPENRAG_URL:-http://openrag-backend:8000}

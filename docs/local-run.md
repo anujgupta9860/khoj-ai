@@ -160,3 +160,29 @@ The same stack deploys to GKE from the Helm charts under `charts/` —
 see `docs/production-deploy-gke.md`. Compose is the local twin of that
 deployment: same services, same hostnames (`openrag-backend:8000`,
 `khoj`, `khoj-agent`, `docling:5001`, `opensearch:9200`).
+
+## Troubleshooting: frontend proxy SSL errors (ERR_SSL_WRONG_VERSION_NUMBER)
+
+Symptom: `docker compose logs openrag-frontend` fills with
+`Proxy error: TypeError: fetch failed ... ERR_SSL_WRONG_VERSION_NUMBER`.
+The frontend is making a TLS call where plain HTTP is expected. Two
+suspects: the container's `OPENRAG_BACKEND_SSL` is not `false`, or a
+proxy injected by Docker Desktop / a corporate network is hijacking
+service-to-service calls.
+
+Inspect the RUNNING container's actual environment (the compose file
+on disk is not proof of what the container got):
+
+```
+docker inspect khoj-openrag-frontend --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -iE 'BACKEND|PROXY'
+```
+
+- `OPENRAG_BACKEND_SSL=true` in the output -> the container was created
+  from a different compose state. Fix the value in `docker-compose.yml`
+  (`OPENRAG_BACKEND_SSL: "false"`) and recreate:
+  `docker compose up -d --force-recreate openrag-frontend`.
+- Any `HTTP_PROXY` / `HTTPS_PROXY` in the output -> the proxy is the
+  problem. The compose file sets `NO_PROXY` for all internal service
+  names on every service (see `x-internal-env` in docker-compose.yml);
+  make sure your checkout is current (`git pull`) and recreate the
+  stack so the containers pick it up.
