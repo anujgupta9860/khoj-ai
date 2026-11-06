@@ -208,7 +208,14 @@ docker exec khoj-openrag-frontend node -e "fetch('http://openrag-backend:8000/fi
 If a bare request still fails while the manual fetch works, check
 whether the frontend's bundled code reads the variable at runtime at
 all — the app executes from the entrypoint's copy in
-`/tmp/openrag-frontend`:
+`/tmp/openrag-frontend`. The published image's layout may differ;
+locate the bundle first:
+
+```
+docker exec khoj-openrag-frontend sh -c 'find / -name "route.js" -path "*api*" 2>/dev/null | head -3'
+```
+
+Then grep the printed path:
 
 ```
 docker exec khoj-openrag-frontend sh -c 'grep -c OPENRAG_BACKEND_SSL "/tmp/openrag-frontend/.next/server/app/api/[...path]/route.js"'
