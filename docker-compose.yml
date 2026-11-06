@@ -25,7 +25,15 @@ x-internal-env: &internal-env
 # server-side (provider + models + OCR on), so there is no setup wizard.
 #
 # Khoj-only mode (OpenRAG hosted elsewhere, e.g. GKE): set OPENRAG_URL in
-# .env to the external instance and start just the product services:
+# .env to the external instance and start just the product # OpenRAG image version: pinned to one lockstep generation (default
+# 0.8.1.dev8, the generation the GKE deployment runs). Do NOT float on
+# "latest": upstream publishes daily dev builds and the newest sets
+# have shipped mutually inconsistent images (a frontend proxy that
+# reads OPENRAG_BACKEND_SSL by truthiness; a backend flow revision
+# whose Data Operations component fails to build on the sibling
+# Langflow). Override with OPENRAG_VERSION in .env, all services
+# together.
+services:
 #   docker compose up --no-deps khoj khoj-agent
 #
 # The same stack deploys to GKE from the Helm charts under charts/
@@ -34,7 +42,7 @@ x-internal-env: &internal-env
 services:
   # ---------------------------------------------------------------- OpenRAG
   opensearch:
-    image: docker.io/langflowai/openrag-opensearch:${OPENRAG_VERSION:-latest}
+    image: docker.io/langflowai/openrag-opensearch:${OPENRAG_VERSION:-0.8.1.dev8}
     container_name: khoj-opensearch
     restart: unless-stopped
     environment:
@@ -79,7 +87,7 @@ services:
       - "${DOCLING_PORT:-5001}:5001"
 
   langflow:
-    image: docker.io/langflowai/openrag-langflow:${OPENRAG_VERSION:-latest}
+    image: docker.io/langflowai/openrag-langflow:${OPENRAG_VERSION:-0.8.1.dev8}
     container_name: khoj-langflow
     restart: unless-stopped
     depends_on:
@@ -145,7 +153,7 @@ services:
       LANGFLOW_VARIABLES_TO_GET_FROM_ENVIRONMENT: "JWT,OPENRAG-QUERY-FILTER,OPENSEARCH_PASSWORD,OPENSEARCH_URL,DOCLING_SERVE_URL,DOCLING_SERVE_VERIFY_SSL,DOCLING_TASK_ID,OWNER,OWNER_NAME,OWNER_EMAIL,CONNECTOR_TYPE,DOCUMENT_ID,SOURCE_URL,ALLOWED_USERS,ALLOWED_GROUPS,ALLOWED_PRINCIPALS,FILENAME,MIMETYPE,FILESIZE,SELECTED_EMBEDDING_MODEL,OPENAI_API_KEY,OPENRAG_LLM_TOKEN,OPENRAG_LLM_BASE_URL,ANTHROPIC_API_KEY,OLLAMA_BASE_URL,OPENSEARCH_INDEX_NAME,OPENRAG_INGEST_URL,OPENRAG_INGEST_TOKEN,OPENRAG_INGEST_RUN_ID,OPENRAG_INGEST_BATCH_SIZE"
 
   openrag-backend:
-    image: docker.io/langflowai/openrag-backend:${OPENRAG_VERSION:-latest}
+    image: docker.io/langflowai/openrag-backend:${OPENRAG_VERSION:-0.8.1.dev8}
     container_name: khoj-openrag-backend
     restart: unless-stopped
     depends_on:
@@ -192,7 +200,7 @@ services:
       LOG_LEVEL: INFO
 
   openrag-frontend:
-    image: docker.io/langflowai/openrag-frontend:${OPENRAG_VERSION:-latest}
+    image: docker.io/langflowai/openrag-frontend:${OPENRAG_VERSION:-0.8.1.dev8}
     container_name: khoj-openrag-frontend
     restart: unless-stopped
     depends_on:
