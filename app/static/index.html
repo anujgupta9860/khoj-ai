@@ -868,6 +868,9 @@ function showJiraForm(row, fields, question, answer, orgId, btn) {
     } else {
       inp = document.createElement("input");
       inp.type = "text";
+      // Reporter defaults to the signed-in user's email (editable -
+      // the server resolves it to a Jira accountId at create time).
+      if (f.key === "reporter" && typeof _email !== "undefined" && _email) inp.value = _email;
     }
     inputs[f.key] = { el: inp, multi: !!f.multi };
     lab.appendChild(inp);
