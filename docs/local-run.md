@@ -266,3 +266,17 @@ docker compose logs langflow --tail=200 | grep -B5 -A25 "NoneType"
 ```
 
 The traceback names the component and line where the None appears.
+
+A common cause of the Data Operations build failure is image
+version skew: the OpenRAG images are published as daily lockstep
+dev builds, and a floating `latest` pull can pair a backend flow
+revision with a Langflow that cannot build its components. The
+compose file pins one generation (default `0.8.1.dev8`); to force
+that generation explicitly — the backend re-syncs its flows to
+Langflow on startup:
+
+```
+OPENRAG_VERSION=0.8.1.dev8 bash scripts/run-local-stack.sh
+```
+
+Then retry the upload.
