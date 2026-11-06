@@ -252,3 +252,17 @@ it for the frontend, and the GKE chart only emits it when
 pull on GKE still carries the correct comparison, which is why the
 same `"false"` string works there — a re-pull of `latest` would have
 broken it the same way.
+
+## Troubleshooting: ingestion fails with 'NoneType' object has no attribute 'copy'
+
+First make sure `LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true` is set on
+the langflow and openrag-backend services (compose does this; with
+it off, Langflow substitutes built-in components for the flow's
+custom code and ingestion fails). If ingestion still fails, get the
+traceback from the Langflow container right after a failed attempt:
+
+```
+docker compose logs langflow --tail=200 | grep -B5 -A25 "NoneType"
+```
+
+The traceback names the component and line where the None appears.
