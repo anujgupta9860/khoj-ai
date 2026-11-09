@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Open Search — search the documents</title>
+<title>Customer Success Agent</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <style>
@@ -42,6 +42,10 @@
   .navbtn:hover { background: #16233f; transform: none; }
   .navbtn.active { background: linear-gradient(90deg, #1d6fe0, #0e9fd8); color: #fff; border-left-color: transparent; }
   .navbtn .ic { width: 17px; text-align: center; opacity: .75; }
+  .recentchat { display: block; width: 100%; padding: 7px 10px; margin: 2px 0; border: 0; border-radius: 8px; background: transparent; color: #c3cfe4; font-size: 13.5px; cursor: pointer; box-shadow: none; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .recentchat:hover { background: #16233f; transform: none; }
+  .recentchat.active { background: #16233f; color: #fff; }
+  #recentchats .empty { padding: 2px 10px; font-size: 13px; }
   #sidebar .spacer { flex: 1; }
   #userbox { position: relative; border-top: 1px solid var(--border); padding-top: 12px; }
   #userchip { display: flex; align-items: center; gap: 10px; width: 100%; background: transparent; border: 0; border-radius: 10px; padding: 6px 8px; cursor: pointer; box-shadow: none; text-align: left; }
@@ -179,7 +183,7 @@
 <body>
 <!-- Auth -->
 <section id="authview" class="card hidden">
-  <div class="logo">Open <span>Search</span></div>
+  <div class="logo">Customer <span>Success Agent</span></div>
   <div id="orgbrand" class="hidden" style="margin-bottom:10px; text-align:center">
     <img id="orglogo" alt="" style="max-height:44px; display:none; margin:0 auto" />
     <div id="orgtagline" class="muted"></div>
@@ -198,14 +202,12 @@
 <!-- App shell -->
 <div id="searchview" class="hidden">
   <aside id="sidebar">
-    <div class="logo">Open <span>Search</span></div>
-    <div class="sidelabel">Knowledge source</div>
-    <select id="corpus">
-      <option value="">My documents</option>
-    </select>
+    <div class="logo">Customer <span>Success Agent</span></div>
     <div class="sidelabel">Workspace</div>
     <button class="navbtn" id="navchat"><span class="ic">💬</span>Chat</button>
     <button class="navbtn active" id="navdocuments" data-view="documents"><span class="ic">🗂</span>Documents</button>
+    <div class="sidelabel">Recent chats</div>
+    <div id="recentchats"></div>
     <div class="spacer"></div>
     <div id="userbox" class="hidden">
       <div id="usermenu" class="hidden">
@@ -231,7 +233,7 @@
         <div id="inviteslist"></div>
       </div>
       <h2>Search</h2>
-      <p class="sub">Ask the documents — answers come only from the corpus selected on the left.</p>
+      <p class="sub">Ask your documents — answers come only from your own documents.</p>
       <div class="searchbox">
         <input id="q" type="text" placeholder="Search the documents…" />
         <button id="go">Search</button>
@@ -244,7 +246,7 @@
     <!-- Documents -->
     <section class="view" id="view-documents">
       <h2>Documents</h2>
-      <p class="sub">Uploads go to the corpus selected on the left. Personal uploads are private to you; business uploads are shared with that business's members (owners and admins upload).</p>
+      <p class="sub">Your uploaded documents. Uploads are private to you.</p>
       <div id="uploadbox" class="card">
         <h3>Upload a document</h3>
         <div class="row">
@@ -313,10 +315,10 @@
     <!-- Developers / MCP -->
     <section class="view hidden" id="view-developers">
       <h2>Developers</h2>
-      <p class="sub">Use Open Search inside your own agent over MCP.</p>
+      <p class="sub">Use Customer Success Agent inside your own agent over MCP.</p>
       <div id="mcpbox" class="card">
-        <h3>Open Search as an MCP server</h3>
-        <p class="muted">Add Open Search as an MCP server in Claude, Cursor, or any MCP client and your agent can search your documents. Paste this config:</p>
+        <h3>Customer Success Agent as an MCP server</h3>
+        <p class="muted">Add Customer Success Agent as an MCP server in Claude, Cursor, or any MCP client and your agent can search your documents. Paste this config:</p>
         <pre id="mcpconfig" class="code"></pre>
         <button id="copymcp" class="secondary">Copy my MCP config</button>
         <p class="muted">The token is your sign-in token and lasts 7 days — come back here for a fresh config when it expires.</p>
@@ -440,6 +442,7 @@ async function enterApp() {
   renderMcpConfig();
   await acceptStashedInvite();
   await loadOrgs();
+  loadRecentChats();
   loadDocs();
   loadInvitesInbox();
   loadMe();
@@ -569,7 +572,7 @@ async function loadInvitesInbox() {
 }
 
 let myOrgs = [];
-function currentOrg() { return $("corpus").value || null; }
+function currentOrg() { return null; }  // knowledge source is always the user's own documents (no sidebar selector)
 function selectedOrgObj() { return myOrgs.find((o) => o.id === currentOrg()) || null; }
 
 async function api(path, options = {}) {
@@ -582,11 +585,6 @@ async function loadOrgs() {
   const resp = await api("/api/orgs");
   if (!resp.ok) return;
   myOrgs = (await resp.json()).orgs || [];
-  const sel = $("corpus");
-  const keep = sel.value;
-  sel.innerHTML = `<option value="">My documents</option>` +
-    myOrgs.map((o) => `<option value="${o.id}">${o.name} (business)</option>`).join("");
-  sel.value = myOrgs.some((o) => o.id === keep) ? keep : "";
   $("bizlist").innerHTML = myOrgs.length
     ? myOrgs.map((o) => `<div>${o.name} — you are ${o.role}${o.status && o.status !== "approved" ? ` · <b>${o.status}</b>` : ""}</div>`).join("")
     : "You don't belong to any business yet — create one above.";
@@ -686,8 +684,6 @@ $("savebranding").onclick = async () => {
   $("brandstatus").textContent = resp.ok ? "Branding saved." : "Save failed: " + (await resp.text());
   if (resp.ok) await loadOrgs();
 };
-
-$("corpus").onchange = () => { loadDocs(); refreshMemberBox(); chatContext = null; $("chatlog").innerHTML = ""; chatSyncCorpus(); };
 
 $("createbiz").onclick = async () => {
   const name = $("bizname").value.trim();
@@ -840,8 +836,46 @@ function chatAdd(who, body, cls, asMarkdown) {
   return div;
 }
 function chatSyncCorpus() {
-  const sel = $("corpus");
-  $("chatcorpus").textContent = sel && sel.selectedIndex > 0 ? sel.options[sel.selectedIndex].text : "My documents";
+  $("chatcorpus").textContent = "Your documents";
+}
+async function loadRecentChats() {
+  const box = $("recentchats");
+  if (!box) return;
+  const resp = await api("/api/chats");
+  if (!resp.ok) return;
+  const chats = (await resp.json()).chats || [];
+  box.innerHTML = "";
+  if (!chats.length) {
+    const d = document.createElement("div");
+    d.className = "muted empty";
+    d.textContent = "No chats yet";
+    box.appendChild(d);
+    return;
+  }
+  for (const c of chats) {
+    const b = document.createElement("button");
+    b.className = "recentchat";
+    b.textContent = c.title || "Chat";
+    b.title = c.title || "Chat";
+    b.onclick = () => openRecentChat(c, b);
+    box.appendChild(b);
+  }
+}
+function openRecentChat(chat, btn) {
+  document.querySelectorAll(".recentchat").forEach((x) => x.classList.remove("active"));
+  if (btn) btn.classList.add("active");
+  chatContext = chat.contextId || null;
+  $("chatlog").innerHTML = "";
+  $("chatpanel").classList.add("open");
+  $("navchat").classList.add("active");
+  document.querySelectorAll(".navbtn[data-view]").forEach((x) => x.classList.remove("active"));
+  chatSyncCorpus();
+  for (const m of chat.messages || []) {
+    if (m.role === "user") chatAdd("You", m.text);
+    else chatAdd("Customer Success Agent", m.text, null, true);
+  }
+  chatScroll();
+  $("chatinput").focus();
 }
 $("chatfab").onclick = () => { $("chatpanel").classList.add("open"); $("navchat").classList.add("active"); document.querySelectorAll(".navbtn[data-view]").forEach((b) => b.classList.remove("active")); chatSyncCorpus(); $("chatinput").focus(); };
 function closeChat() {
@@ -1009,7 +1043,7 @@ async function doChat() {
   chatAdd("You", text);
   $("chatinput").value = "";
   $("chatsend").disabled = true;
-  const thinking = chatAdd("Open Search", "Thinking…", "bot thinking");
+  const thinking = chatAdd("Customer Success Agent", "Thinking…", "bot thinking");
   try {
     const resp = await fetch("/api/chat", {
       method: "POST",
@@ -1020,9 +1054,10 @@ async function doChat() {
     const data = await resp.json();
     chatContext = data.contextId;
     thinking.remove();
-    chatAdd("Open Search", data.reply, null, true);
+    chatAdd("Customer Success Agent", data.reply, null, true);
     attachSources(data.sources);
     attachTicketButton(text, data.reply, currentOrg());
+    loadRecentChats();
   } catch (e) {
     $("chaterr").textContent = "Chat failed: " + e;
   } finally {
@@ -1063,7 +1098,7 @@ function showView(name) {
   document.querySelectorAll(".navbtn[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
 }
 document.querySelectorAll(".navbtn[data-view]").forEach((b) => { b.onclick = () => showView(b.dataset.view); });
-$("navchat").onclick = () => $("chatfab").click();
+$("navchat").onclick = () => { chatContext = null; $("chatlog").innerHTML = ""; document.querySelectorAll(".recentchat").forEach((b) => b.classList.remove("active")); $("chatfab").click(); };
 
 // --- user chip: clicking the name/avatar opens the admin options menu ---
 $("userchip").onclick = (e) => { e.stopPropagation(); $("usermenu").classList.toggle("hidden"); };
@@ -1109,7 +1144,7 @@ $("chatmic").onclick = () => {
   <div id="chathead">
     <div>
       <div class="t">Chat with your documents</div>
-      <div class="muted" id="chatcorpus">My documents</div>
+      <div class="muted" id="chatcorpus">Your documents</div>
     </div>
     <button id="chatclose" aria-label="Close chat">✕</button>
   </div>
@@ -1121,7 +1156,7 @@ $("chatmic").onclick = () => {
       <button id="chatsend" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></button>
     </div>
     <div class="err" id="chaterr"></div>
-    <div class="muted" style="font-size:12px">Powered by the Open Search A2A agent — answers are grounded in the selected corpus.</div>
+    <div class="muted" style="font-size:12px">Powered by the Customer Success Agent — answers are grounded in your documents.</div>
   </div>
 </aside>
 </body>

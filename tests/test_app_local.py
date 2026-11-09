@@ -564,6 +564,22 @@ rpc_sent = agent_calls[0][1]
 assert rpc_sent["method"] == "message/send"
 assert rpc_sent["params"]["message"]["parts"][0]["text"] == "what is in doc.md?"
 assert agent_calls[0][2]["Authorization"] == "Bearer whatever"  # caller token forwarded
+# recent chats: the sidebar's last-5 list, grouped by contextId
+r = client.post("/api/chat", json={"message": "and what else?", "contextId": "ctx-42"}, headers=H)
+assert r.status_code == 200, r.text
+r = client.get("/api/chats", headers=H)
+assert r.status_code == 200, r.text
+chats = r.json()["chats"]
+assert len(chats) == 1 and chats[0]["contextId"] == "ctx-42", chats
+assert chats[0]["title"] == "what is in doc.md?", chats[0]
+assert [m["role"] for m in chats[0]["messages"]] == ["user", "assistant", "user", "assistant"]
+assert chats[0]["messages"][0]["text"] == "what is in doc.md?"
+assert chats[0]["messages"][1]["text"] == "Grounded answer."
+# isolation: another user's chat events never leak into my list
+main.org_service().log_event({"kind": "chat", "uid": "someone-else", "email": "x@example.com",
+                              "contextId": "ctx-other", "query": "not mine", "answer": "nope"})
+chats = client.get("/api/chats", headers=H).json()["chats"]
+assert all(c["contextId"] != "ctx-other" for c in chats), chats
 # --- Jira ticket: configured components / affects-versions ride along --
 os.environ.update({
     "JIRA_BASE_URL": "https://sandbox.example.atlassian.net",

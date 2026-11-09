@@ -512,6 +512,7 @@ def chat(body: ChatBody, authorization: str | None = Header(default=None)):
         uid=user["uid"],
         email=user.get("email", ""),
         orgId=body.orgId,
+        contextId=result.get("contextId") or context_id,
         query=body.message,
         summary=text[:500],
         answer=text,
@@ -524,6 +525,41 @@ def chat(body: ChatBody, authorization: str | None = Header(default=None)):
         "contextId": result.get("contextId") or context_id,
         "sources": sources,
     }
+
+
+@app.get("/api/chats")
+def list_chats(authorization: str | None = Header(default=None)):
+    """The caller's 5 most recent chat conversations, rebuilt from the
+    chat event log so the sidebar can offer one-click reopen. Grouped by
+    A2A contextId; events logged before context ids were recorded form
+    single-exchange chats that reopen read-only."""
+    user = require_user(authorization)
+    grouped: dict[str, dict] = {}
+    order: list[str] = []
+    for e in org_service().list_events(limit=1000):  # newest first
+        if e.get("kind") != "chat" or e.get("uid") != user["uid"]:
+            continue
+        key = e.get("contextId") or f"single-{e.get('ts')}"
+        chat = grouped.get(key)
+        if chat is None:
+            chat = grouped[key] = {
+                "contextId": e.get("contextId"),
+                "updatedAt": e.get("ts"),
+                "pairs": [],
+            }
+            order.append(key)
+        chat["pairs"].append(({"role": "user", "text": e.get("query", "")},
+                               {"role": "assistant", "text": e.get("answer", "")}))
+    chats = []
+    for key in order[:5]:
+        chat = grouped[key]
+        # pairs were collected newest-first; flip pair order, keep each
+        # pair's internal user->assistant order
+        chat["messages"] = [m for pair in reversed(chat.pop("pairs")) for m in pair]
+        first = next((m["text"] for m in chat["messages"] if m["role"] == "user"), "Chat")
+        chat["title"] = (first or "Chat")[:60]
+        chats.append(chat)
+    return {"chats": chats}
 
 
 # --- Jira ticket creation ----------------------------------------------------
