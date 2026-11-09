@@ -148,8 +148,8 @@
   .srclist { margin-top: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); padding: 6px 12px; max-width: 640px; }
   .srclist .srcitem { font-size: 13px; padding: 4px 0; color: var(--muted-fg); overflow-wrap: anywhere; }
   .srclist .srcitem + .srcitem { border-top: 1px solid var(--border); }
-  .ticketbtn { font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--muted); color: var(--fg); cursor: pointer; }
-  .ticketbtn:hover:not(:disabled) { border-color: var(--accent2); }
+  .ticketbtn { font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid #ffffff; background: #ffffff; color: #0a1120; cursor: pointer; }
+  .ticketbtn:hover:not(:disabled) { background: #e2e8f0; border-color: #e2e8f0; }
   .ticketbtn:disabled { opacity: .55; cursor: default; }
   .jiraform { display: flex; flex-direction: column; gap: 10px; align-items: stretch; margin-top: 8px; max-width: 420px; }
   .jiraform label { font-size: 13px; color: var(--muted-fg); display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
@@ -1152,7 +1152,7 @@ $("chatmic").onclick = () => {
       <button id="chatsend" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></button>
     </div>
     <div class="err" id="chaterr"></div>
-    <div class="muted" style="font-size:12px">Powered by the Customer Success Agent — answers are grounded in your documents.</div>
+    <div class="muted" style="font-size:12px">Customer Success Agent can make mistakes — always verify content before use.</div>
   </div>
 </aside>
 </body>
