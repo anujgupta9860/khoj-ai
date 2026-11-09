@@ -122,7 +122,7 @@
   #chatpanel { position: fixed; top: 0; right: 0; bottom: 0; left: 264px; z-index: 41; height: 100dvh; display: flex; flex-direction: column; background: var(--bg); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .18s ease, visibility .18s; }
   #chatpanel.open { opacity: 1; visibility: visible; pointer-events: auto; }
   #docfile { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
-  #chathead { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 18px 10px; }
+  #chathead { display: flex; align-items: flex-start; justify-content: flex-end; gap: 10px; padding: 14px 18px 10px; }
   #chathead .t { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
   #chatclose { background: transparent; color: var(--muted-fg); border: 0; box-shadow: none; font-size: 17px; padding: 2px 8px; }
   #chatclose:hover { background: var(--muted); filter: none; }
@@ -1142,9 +1142,6 @@ $("chatmic").onclick = () => {
 <button id="chatfab" class="hidden" title="Chat" aria-label="Open chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
 <aside id="chatpanel" aria-label="Chat">
   <div id="chathead">
-    <div>
-      <div class="t">Customer Success Agent</div>
-    </div>
     <button id="chatclose" aria-label="Close chat">✕</button>
   </div>
   <div id="chatlog"></div>
