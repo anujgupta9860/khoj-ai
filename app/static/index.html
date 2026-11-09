@@ -141,8 +141,8 @@
   .msg.md li { margin: 2px 0; }
   .msg.md .mdh { font-weight: 650; margin: 10px 0 4px; }
   .msg.md code { background: var(--muted); border-radius: 5px; padding: 1px 5px; font-size: 13px; }
-  .msg-actions { align-self: flex-start; margin-top: -14px; }
-  .srcbox { align-self: flex-start; margin-top: -14px; }
+  .ansrow { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; margin-top: -14px; }
+  .srcbox { }
   .srcbtn { font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--muted); color: var(--fg); cursor: pointer; }
   .srcbtn:hover { border-color: var(--accent2); }
   .srclist { margin-top: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); padding: 6px 12px; max-width: 640px; }
@@ -151,10 +151,10 @@
   .ticketbtn { font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid #ffffff; background: #ffffff; color: #0a1120; cursor: pointer; }
   .ticketbtn:hover:not(:disabled) { background: #e2e8f0; border-color: #e2e8f0; }
   .ticketbtn:disabled { opacity: .55; cursor: default; }
-  .jiraform { display: flex; flex-direction: column; gap: 10px; align-items: stretch; margin-top: 8px; max-width: 420px; }
+  .jiraform { display: flex; flex-direction: column; gap: 10px; align-items: stretch; margin-top: 8px; max-width: 420px; flex: 1 1 100%; }
   .jiraform label { font-size: 13px; color: var(--muted-fg); display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
   .jiraform select, .jiraform input { font: inherit; font-size: 13px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--field); color: var(--fg); width: 100%; }
-  .msg-actions a { font-size: 12.5px; color: var(--accent); text-decoration: none; font-weight: 600; }
+  .ansrow a { font-size: 12.5px; color: #ffffff; text-decoration: underline; font-weight: 600; }
   #chatfoot { padding: 8px max(18px, calc(50% - 384px)) 14px; background: var(--bg); }
   #chatfoot .row { align-items: center; border: 1px solid var(--input); border-radius: 28px; padding: 5px 5px 5px 18px; background: var(--panel); box-shadow: 0 10px 24px -10px rgba(0,0,0,.55); }
   #chatfoot .row:focus-within { border-color: var(--accent2); box-shadow: 0 0 0 3px rgba(34,211,238,.15); }
@@ -987,10 +987,22 @@ function showJiraForm(row, fields, question, answer, orgId, btn) {
   chatScroll();
 }
 
+function answerRow() {
+  // One shared row per answer: the Sources pill and the Jira ticket
+  // button sit on the same line. The row is the chatlog's last child
+  // until the next message arrives, so deriving it from the DOM stays
+  // correct across chat clears and replays.
+  const log = $("chatlog");
+  const last = log.lastElementChild;
+  if (last && last.classList.contains("ansrow")) return last;
+  const row = document.createElement("div");
+  row.className = "ansrow";
+  log.appendChild(row);
+  return row;
+}
 async function attachTicketButton(question, answer, orgId) {
   if (!(await jiraEnabled())) return;
-  const row = document.createElement("div");
-  row.className = "msg-actions";
+  const row = answerRow();
   const btn = document.createElement("button");
   btn.className = "ticketbtn";
   btn.textContent = "🎫 Create Jira ticket";
@@ -1019,7 +1031,6 @@ async function attachTicketButton(question, answer, orgId) {
     });
   };
   row.appendChild(btn);
-  $("chatlog").appendChild(row);
   chatScroll();
 }
 // Sources render as a collapsible dropdown under the answer — a pill
@@ -1045,7 +1056,7 @@ function attachSources(sources) {
   btn.onclick = () => { const open = list.classList.toggle("hidden") === false; setLabel(open); chatScroll(); };
   box.appendChild(btn);
   box.appendChild(list);
-  $("chatlog").appendChild(box);
+  answerRow().appendChild(box);
   chatScroll();
 }
 async function doChat() {
@@ -1164,7 +1175,7 @@ $("chatmic").onclick = () => {
       <button id="chatsend" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></button>
     </div>
     <div class="err" id="chaterr"></div>
-    <div class="muted" style="font-size:12px">Customer Success Agent can make mistakes — always verify content before use.</div>
+    <div class="muted" style="font-size:12px; text-align:center">Customer Success Agent can make mistakes — always verify content before use.</div>
   </div>
 </aside>
 </body>
