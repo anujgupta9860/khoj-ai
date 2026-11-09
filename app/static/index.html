@@ -138,6 +138,12 @@
   .msg.md .mdh { font-weight: 650; margin: 10px 0 4px; }
   .msg.md code { background: var(--muted); border-radius: 5px; padding: 1px 5px; font-size: 13px; }
   .msg-actions { align-self: flex-start; margin-top: -14px; }
+  .srcbox { align-self: flex-start; margin-top: -14px; }
+  .srcbtn { font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--muted); color: var(--fg); cursor: pointer; }
+  .srcbtn:hover { border-color: var(--accent2); }
+  .srclist { margin-top: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); padding: 6px 12px; max-width: 640px; }
+  .srclist .srcitem { font-size: 13px; padding: 4px 0; color: var(--muted-fg); overflow-wrap: anywhere; }
+  .srclist .srcitem + .srcitem { border-top: 1px solid var(--border); }
   .ticketbtn { font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--muted); color: var(--fg); cursor: pointer; }
   .ticketbtn:hover:not(:disabled) { border-color: var(--accent2); }
   .ticketbtn:disabled { opacity: .55; cursor: default; }
@@ -970,6 +976,32 @@ async function attachTicketButton(question, answer, orgId) {
   $("chatlog").appendChild(row);
   chatScroll();
 }
+// Sources render as a collapsible dropdown under the answer — a pill
+// button with the count; clicking it expands the file list (the raw_
+// ingest prefix is stripped for display, full name stays in the tooltip).
+function attachSources(sources) {
+  if (!sources || !sources.length) return;
+  const box = document.createElement("div");
+  box.className = "srcbox";
+  const btn = document.createElement("button");
+  btn.className = "srcbtn";
+  const setLabel = (open) => { btn.textContent = "📄 Sources (" + sources.length + ") " + (open ? "▴" : "▾"); };
+  setLabel(false);
+  const list = document.createElement("div");
+  list.className = "srclist hidden";
+  for (const s of sources) {
+    const item = document.createElement("div");
+    item.className = "srcitem";
+    item.textContent = String(s).replace(/^raw_[0-9a-f]+_/i, "");
+    item.title = s;
+    list.appendChild(item);
+  }
+  btn.onclick = () => { const open = list.classList.toggle("hidden") === false; setLabel(open); chatScroll(); };
+  box.appendChild(btn);
+  box.appendChild(list);
+  $("chatlog").appendChild(box);
+  chatScroll();
+}
 async function doChat() {
   const text = $("chatinput").value.trim();
   if (!text) return;
@@ -988,7 +1020,8 @@ async function doChat() {
     const data = await resp.json();
     chatContext = data.contextId;
     thinking.remove();
-    chatAdd("Open Search", data.reply + (data.sources && data.sources.length ? "\n\nSources: " + data.sources.join(", ") : ""), null, true);
+    chatAdd("Open Search", data.reply, null, true);
+    attachSources(data.sources);
     attachTicketButton(text, data.reply, currentOrg());
   } catch (e) {
     $("chaterr").textContent = "Chat failed: " + e;
