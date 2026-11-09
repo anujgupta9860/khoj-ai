@@ -696,6 +696,42 @@ class JiraTicketBody(BaseModel):
     # Values the user picked when the UI prompted for the project's
     # required fields: {fieldKey: name} or {fieldKey: [names]}.
     extraFields: dict | None = None
+    # The visible conversation ([{role: "user"|"agent", text}]): the
+    # agent summarizes it into the ticket, and the full transcript is
+    # appended so support sees everything the customer already tried.
+    transcript: list | None = None
+
+
+def _agent_summarize(authorization: str | None, transcript: list) -> str | None:
+    """Ask the agent for an LLM summary of the conversation. Returns
+    None on any failure — ticket creation must never depend on it."""
+    agent_url = os.environ.get("KHOJ_AGENT_URL", "http://khoj-agent")
+    try:
+        resp = requests.post(
+            agent_url + "/summarize",
+            json={"transcript": transcript},
+            headers={"Authorization": authorization or ""},
+            timeout=45,
+        )
+        if resp.status_code != 200:
+            return None
+        summary = ((resp.json() or {}).get("summary") or "").strip()
+        return summary or None
+    except Exception:
+        return None
+
+
+def _transcript_adf(transcript: list) -> list:
+    out = []
+    for turn in transcript[-30:]:
+        if not isinstance(turn, dict):
+            continue
+        text = " ".join(str(turn.get("text") or "").split())[:2000]
+        if not text:
+            continue
+        who = "Customer" if turn.get("role") == "user" else "Assistant"
+        out += _adf(f"{who}: {text}")
+    return out
 
 
 def _jira_user_account_id(cfg: dict, query: str) -> str:
@@ -805,7 +841,19 @@ def jira_ticket(body: JiraTicketBody, authorization: str | None = Header(default
     if len(summary) > 200:
         summary = summary[:197] + "..."
     scope = "an organization corpus" if body.orgId else "personal documents"
-    meta = f"Asked by {user.get('email', '')} via Khoj chat ({scope})."
+    meta = f"Asked by {user.get('email', '')} via Customer Success Agent chat ({scope})."
+    transcript = [t for t in (body.transcript or []) if isinstance(t, dict)]
+    summary_md = _agent_summarize(authorization, transcript) if transcript else None
+    description = []
+    if summary_md:
+        description += [_adf_heading("Conversation summary")] + _md_to_adf(summary_md)
+    description += [_adf_heading("Question")] + _md_to_adf(question)
+    description += [_adf_heading("Answer")] + _md_to_adf(answer)
+    if summary_md:
+        convo = _transcript_adf(transcript)
+        if convo:
+            description += [_adf_heading("Full conversation")] + convo
+    description += _adf(meta)
     fields = {
             "project": {"key": cfg["project"]},
             "summary": summary,
@@ -813,13 +861,7 @@ def jira_ticket(body: JiraTicketBody, authorization: str | None = Header(default
             "description": {
                 "type": "doc",
                 "version": 1,
-                "content": (
-                    [_adf_heading("Question")]
-                    + _md_to_adf(question)
-                    + [_adf_heading("Answer")]
-                    + _md_to_adf(answer)
-                    + _adf(meta)
-                ),
+                "content": description,
             },
     }
     if cfg["components"]:

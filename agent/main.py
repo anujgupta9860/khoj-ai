@@ -702,6 +702,69 @@ def healthz():
     return {"ok": True}
 
 
+SUMMARY_SYSTEM = (
+    "You summarize a customer support chat for the support engineer who "
+    "will pick up the ticket. The customer first tried to solve their "
+    "problem in this self-service chat; the ticket is the escalation. "
+    "Write a concise, factual summary in Markdown with these short "
+    "sections: **Issue** (what the customer needs), **What was covered** "
+    "(what the assistant already explained or suggested), **Still "
+    "unresolved** (what remains open; say 'Nothing stated' if the "
+    "conversation resolved it). Use only facts from the conversation — "
+    "never invent steps, error messages, names, or product details."
+)
+
+
+def _summarize_transcript(transcript: list) -> str:
+    lines = []
+    total = 0
+    for turn in transcript[-30:]:
+        if not isinstance(turn, dict):
+            continue
+        role = "Customer" if turn.get("role") == "user" else "Assistant"
+        text = " ".join(str(turn.get("text") or "").split())[:2000]
+        if not text:
+            continue
+        lines.append(f"{role}: {text}")
+        total += len(text)
+        if total > 12000:
+            break
+    if not lines:
+        raise ValueError("Transcript is empty")
+    msg = _chat_completion([
+        {"role": "system", "content": SUMMARY_SYSTEM},
+        {"role": "user", "content": "Conversation:\n\n" + "\n\n".join(lines)},
+    ])
+    summary = (msg.get("content") or "").strip()
+    if not summary:
+        raise RuntimeError("Empty summary from the model")
+    return summary
+
+
+@app.post("/summarize")
+async def summarize(request: Request, authorization: str | None = Header(default=None)):
+    """Summarize a chat transcript for a support ticket. Called by the
+    web service when a user escalates a chat to Jira; same Khoj token
+    auth as the A2A endpoint."""
+    try:
+        require_user(authorization)
+    except Exception:
+        return JSONResponse({"detail": "Unauthorized: valid Khoj token required"}, status_code=401)
+    body = await request.json()
+    transcript = body.get("transcript") or []
+    if not isinstance(transcript, list) or not transcript:
+        return JSONResponse({"detail": "transcript is required"}, status_code=422)
+    if not OPENAI_API_KEY:
+        return JSONResponse({"detail": "No answer model configured"}, status_code=501)
+    try:
+        summary = _summarize_transcript(transcript)
+    except ValueError as e:
+        return JSONResponse({"detail": str(e)}, status_code=422)
+    except Exception as e:
+        return JSONResponse({"detail": f"Summarization failed: {e}"}, status_code=502)
+    return {"summary": summary}
+
+
 def _rpc_error(req_id, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
 

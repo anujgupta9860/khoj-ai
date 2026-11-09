@@ -617,6 +617,70 @@ _jf = jira_captured["json"]["fields"]
 assert _jf["components"] == [{"name": "Platform"}, {"name": "Cloud"}], _jf
 assert _jf["versions"] == [{"name": "R24.4"}], _jf
 
+# --- /api/jira/ticket with a conversation transcript: the ticket gets the
+# agent's LLM summary plus the full conversation; a summarize failure
+# falls back to the plain question/answer ticket.
+import json as _json2
+
+
+def jira_post_with_summary(url, json=None, files=None, headers=None, timeout=None, **kw):
+    if url.endswith("/summarize"):
+        jira_captured["summarize_json"] = json
+
+        class RS:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return {"summary": "**Issue**\nVPN drops hourly."}
+
+        return RS()
+    return jira_post(url, json=json, files=files, headers=headers, timeout=timeout, **kw)
+
+
+main.requests.post = jira_post_with_summary
+jira_captured.clear()
+r = client.post("/api/jira/ticket", json={
+    "question": "Why does my VPN drop?",
+    "answer": "Check the tunnel keepalive.",
+    "transcript": [
+        {"role": "user", "text": "My VPN drops every hour"},
+        {"role": "agent", "text": "Check the tunnel keepalive."},
+        {"role": "user", "text": "Still drops"},
+    ],
+}, headers=H)
+assert r.status_code == 200, r.text
+assert jira_captured["summarize_json"]["transcript"][0]["text"].startswith("My VPN"), jira_captured
+_desc = _json2.dumps(jira_captured["json"]["fields"]["description"])
+assert "Conversation summary" in _desc and "VPN drops hourly." in _desc, _desc
+assert "Full conversation" in _desc and "Customer: My VPN drops every hour" in _desc, _desc
+
+
+def jira_post_no_summary(url, json=None, files=None, headers=None, timeout=None, **kw):
+    if url.endswith("/summarize"):
+        class RF:
+            status_code = 502
+            text = "down"
+
+            def json(self):
+                return {}
+
+        return RF()
+    return jira_post(url, json=json, files=files, headers=headers, timeout=timeout, **kw)
+
+
+main.requests.post = jira_post_no_summary
+jira_captured.clear()
+r = client.post("/api/jira/ticket", json={
+    "question": "Why does my VPN drop?",
+    "answer": "Check the tunnel keepalive.",
+    "transcript": [{"role": "user", "text": "My VPN drops every hour"}],
+}, headers=H)
+assert r.status_code == 200, r.text
+_desc = _json2.dumps(jira_captured["json"]["fields"]["description"])
+assert "Conversation summary" not in _desc and "Full conversation" not in _desc, _desc
+main.requests.post = jira_post
+
 # --- /api/jira/fields: prompt only for required fields config doesn't cover
 CREATEMETA = {"projects": [{"issuetypes": [{"fields": {
     "summary": {"required": True, "name": "Summary", "allowedValues": []},
