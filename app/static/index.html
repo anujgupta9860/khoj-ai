@@ -1069,24 +1069,29 @@ function attachSources(sources) {
   answerRow().appendChild(box);
   chatScroll();
 }
-async function showSuggestions() {
-  // Empty-chat starter questions, generated from the user's documents.
-  const box = $("chatempty");
-  box.classList.remove("hidden");
+const SUGG_FALLBACK = ["Summarize my documents", "What are the key points in my documents?", "How do I troubleshoot a problem using my documents?", "What do my documents say about getting started?"];
+function renderSuggChips(list) {
   const wrap = $("suggchips");
   wrap.innerHTML = "";
+  for (const s of list || []) {
+    const b = document.createElement("button");
+    b.className = "suggchip";
+    b.textContent = s;
+    b.onclick = () => { $("chatinput").value = s; doChat(); };
+    wrap.appendChild(b);
+  }
+}
+async function showSuggestions() {
+  // Empty-chat starter questions. The static fallbacks render instantly;
+  // the document-based ones (an LLM round trip) swap in when they land.
+  $("chatempty").classList.remove("hidden");
+  renderSuggChips(SUGG_FALLBACK);
   try {
     const r = await fetch("/api/suggestions", { headers: { Authorization: "Bearer " + (await token()) } });
     if (!r.ok) return;
     const d = await r.json();
-    for (const s of d.suggestions || []) {
-      const b = document.createElement("button");
-      b.className = "suggchip";
-      b.textContent = s;
-      b.onclick = () => { $("chatinput").value = s; doChat(); };
-      wrap.appendChild(b);
-    }
-  } catch (e) { /* the empty state still shows its heading */ }
+    if ((d.suggestions || []).length) renderSuggChips(d.suggestions);
+  } catch (e) { /* the fallback chips are already on screen */ }
 }
 function hideSuggestions() { $("chatempty").classList.add("hidden"); }
 async function doChat() {

@@ -866,6 +866,7 @@ _prev_post_sugg = main.requests.post
 def sugg_post_ok(url, json=None, files=None, headers=None, timeout=None, **kw):
     if url.endswith("/suggestions"):
         sugg_captured["json"] = json
+        sugg_captured["n"] = sugg_captured.get("n", 0) + 1
 
         class R:
             status_code = 200
@@ -884,6 +885,12 @@ r = client.get("/api/suggestions", headers=H)
 assert r.status_code == 200, r.text
 assert r.json()["suggestions"][0].startswith("What does the guide"), r.json()
 assert isinstance(sugg_captured["json"]["documents"], list), sugg_captured
+# Second call with the same document set is served from the cache —
+# the agent is not called again.
+r = client.get("/api/suggestions", headers=H)
+assert r.status_code == 200, r.text
+assert sugg_captured["n"] == 1, sugg_captured
+main._SUGG_CACHE.clear()
 
 
 def sugg_post_down(url, json=None, files=None, headers=None, timeout=None, **kw):

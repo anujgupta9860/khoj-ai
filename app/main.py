@@ -569,6 +569,11 @@ SUGGESTIONS_FALLBACK = [
     "What do my documents say about getting started?",
 ]
 
+# Generated suggestions are cached per user + document set: generation
+# costs an LLM round trip, and the set only changes when documents do.
+_SUGG_CACHE: dict = {}
+_SUGG_TTL = 600
+
 
 @app.get("/api/suggestions")
 def suggestions(authorization: str | None = Header(default=None)):
@@ -580,6 +585,10 @@ def suggestions(authorization: str | None = Header(default=None)):
     for d in list_documents(user):
         if d.get("status") == "ready" and (d.get("title") or "").strip():
             titles.append(d["title"])
+    cache_key = (user["uid"], tuple(titles[:8]))
+    hit = _SUGG_CACHE.get(cache_key)
+    if hit and time.time() - hit[0] < _SUGG_TTL:
+        return {"suggestions": hit[1]}
     agent_url = os.environ.get("KHOJ_AGENT_URL", "http://khoj-agent")
     try:
         resp = requests.post(
@@ -595,7 +604,9 @@ def suggestions(authorization: str | None = Header(default=None)):
                 if str(s).strip()
             ]
             if out:
-                return {"suggestions": out[:4]}
+                out = out[:4]
+                _SUGG_CACHE[cache_key] = (time.time(), out)
+                return {"suggestions": out}
     except Exception:
         pass
     return {"suggestions": list(SUGGESTIONS_FALLBACK)}
