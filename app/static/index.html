@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Khoj.ai — search the documents</title>
+<title>Open Search — search the documents</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <style>
@@ -173,7 +173,7 @@
 <body>
 <!-- Auth -->
 <section id="authview" class="card hidden">
-  <div class="logo">Khoj<span>.ai</span></div>
+  <div class="logo">Open <span>Search</span></div>
   <div id="orgbrand" class="hidden" style="margin-bottom:10px; text-align:center">
     <img id="orglogo" alt="" style="max-height:44px; display:none; margin:0 auto" />
     <div id="orgtagline" class="muted"></div>
@@ -192,7 +192,7 @@
 <!-- App shell -->
 <div id="searchview" class="hidden">
   <aside id="sidebar">
-    <div class="logo">Khoj<span>.ai</span></div>
+    <div class="logo">Open <span>Search</span></div>
     <div class="sidelabel">Knowledge source</div>
     <select id="corpus">
       <option value="">My documents</option>
@@ -228,7 +228,7 @@
       <p class="sub">Ask the documents — answers come only from the corpus selected on the left.</p>
       <div class="searchbox">
         <input id="q" type="text" placeholder="Search the documents…" />
-        <button id="go">Khoj</button>
+        <button id="go">Search</button>
       </div>
       <div class="err" id="searcherr"></div>
       <div id="summary" class="summary hidden"></div>
@@ -307,10 +307,10 @@
     <!-- Developers / MCP -->
     <section class="view hidden" id="view-developers">
       <h2>Developers</h2>
-      <p class="sub">Use Khoj inside your own agent over MCP.</p>
+      <p class="sub">Use Open Search inside your own agent over MCP.</p>
       <div id="mcpbox" class="card">
-        <h3>Khoj as an MCP server</h3>
-        <p class="muted">Add Khoj as an MCP server in Claude, Cursor, or any MCP client and your agent can search your documents. Paste this config:</p>
+        <h3>Open Search as an MCP server</h3>
+        <p class="muted">Add Open Search as an MCP server in Claude, Cursor, or any MCP client and your agent can search your documents. Paste this config:</p>
         <pre id="mcpconfig" class="code"></pre>
         <button id="copymcp" class="secondary">Copy my MCP config</button>
         <p class="muted">The token is your sign-in token and lasts 7 days — come back here for a fresh config when it expires.</p>
@@ -593,7 +593,7 @@ function applyBranding(org) {
   document.documentElement.style.setProperty("--accent", b.primaryColor || "#09090b");
   logo.innerHTML = b.logoUrl
     ? `<img src="${b.logoUrl}" alt="" style="max-height:34px; vertical-align:middle" />`
-    : (b.displayName ? `${b.displayName}` : `Khoj<span>.ai</span>`);
+    : (b.displayName ? `${b.displayName}` : `Open <span>Search</span>`);
 }
 
 async function refreshMemberBox() {
@@ -709,7 +709,7 @@ $("addmember").onclick = async () => {
 };
 
 function mcpConfigJson(tok) {
-  return JSON.stringify({ mcpServers: { khoj: {
+  return JSON.stringify({ mcpServers: { opensearch: {
     url: location.origin + "/mcp",
     headers: { Authorization: "Bearer " + tok },
   } } }, null, 2);
@@ -977,7 +977,7 @@ async function doChat() {
   chatAdd("You", text);
   $("chatinput").value = "";
   $("chatsend").disabled = true;
-  const thinking = chatAdd("Khoj", "Thinking…", "bot thinking");
+  const thinking = chatAdd("Open Search", "Thinking…", "bot thinking");
   try {
     const resp = await fetch("/api/chat", {
       method: "POST",
@@ -988,7 +988,7 @@ async function doChat() {
     const data = await resp.json();
     chatContext = data.contextId;
     thinking.remove();
-    chatAdd("Khoj", data.reply + (data.sources && data.sources.length ? "\n\nSources: " + data.sources.join(", ") : ""), null, true);
+    chatAdd("Open Search", data.reply + (data.sources && data.sources.length ? "\n\nSources: " + data.sources.join(", ") : ""), null, true);
     attachTicketButton(text, data.reply, currentOrg());
   } catch (e) {
     $("chaterr").textContent = "Chat failed: " + e;
@@ -1088,7 +1088,7 @@ $("chatmic").onclick = () => {
       <button id="chatsend" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></button>
     </div>
     <div class="err" id="chaterr"></div>
-    <div class="muted" style="font-size:12px">Powered by the Khoj A2A agent — answers are grounded in the selected corpus.</div>
+    <div class="muted" style="font-size:12px">Powered by the Open Search A2A agent — answers are grounded in the selected corpus.</div>
   </div>
 </aside>
 </body>
