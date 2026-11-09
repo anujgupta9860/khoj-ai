@@ -1097,7 +1097,7 @@ function showView(name) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("hidden", v.id !== "view-" + name));
   document.querySelectorAll(".navbtn[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
 }
-document.querySelectorAll(".navbtn[data-view]").forEach((b) => { b.onclick = () => showView(b.dataset.view); });
+document.querySelectorAll(".navbtn[data-view]").forEach((b) => { b.onclick = () => { closeChat(); showView(b.dataset.view); }; });
 $("navchat").onclick = () => { chatContext = null; $("chatlog").innerHTML = ""; document.querySelectorAll(".recentchat").forEach((b) => b.classList.remove("active")); $("chatfab").click(); };
 
 // --- user chip: clicking the name/avatar opens the admin options menu ---
