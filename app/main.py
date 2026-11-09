@@ -562,6 +562,45 @@ def list_chats(authorization: str | None = Header(default=None)):
     return {"chats": chats}
 
 
+SUGGESTIONS_FALLBACK = [
+    "Summarize my documents",
+    "What are the key points in my documents?",
+    "How do I troubleshoot a problem using my documents?",
+    "What do my documents say about getting started?",
+]
+
+
+@app.get("/api/suggestions")
+def suggestions(authorization: str | None = Header(default=None)):
+    """Starter questions for an empty chat: the agent generates them
+    from the caller's ready document titles. Any failure returns the
+    static fallbacks — the empty state must always render."""
+    user = require_user(authorization)
+    titles = []
+    for d in list_documents(user):
+        if d.get("status") == "ready" and (d.get("title") or "").strip():
+            titles.append(d["title"])
+    agent_url = os.environ.get("KHOJ_AGENT_URL", "http://khoj-agent")
+    try:
+        resp = requests.post(
+            agent_url + "/suggestions",
+            json={"documents": titles[:8]},
+            headers={"Authorization": authorization or ""},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            out = [
+                str(s).strip()
+                for s in ((resp.json() or {}).get("suggestions") or [])
+                if str(s).strip()
+            ]
+            if out:
+                return {"suggestions": out[:4]}
+    except Exception:
+        pass
+    return {"suggestions": list(SUGGESTIONS_FALLBACK)}
+
+
 # --- Jira ticket creation ----------------------------------------------------
 # After an answer, the chat UI offers "Create Jira ticket". The web service
 # creates the issue on the configured Jira Cloud site (REST API v3, Basic

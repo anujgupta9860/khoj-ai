@@ -765,6 +765,61 @@ async def summarize(request: Request, authorization: str | None = Header(default
     return {"summary": summary}
 
 
+SUGGESTIONS_FALLBACK = [
+    "Summarize my documents",
+    "What are the key points in my documents?",
+    "How do I troubleshoot a problem using my documents?",
+    "What do my documents say about getting started?",
+]
+
+SUGGESTIONS_SYSTEM = (
+    "You write starter questions for a customer success chat agent that "
+    "answers only from the user's uploaded documents. Given the document "
+    "titles, write exactly 4 short, specific questions the user would "
+    "plausibly ask about those documents. If the list is empty, write 4 "
+    "general questions about getting help from a document knowledge "
+    "base. Reply with ONLY a JSON array of 4 strings — no other text."
+)
+
+
+def _suggestions(documents: list) -> list:
+    titles = [str(d).strip()[:120] for d in documents if str(d).strip()][:8]
+    listing = "\n".join(f"- {t}" for t in titles) or "(no documents yet)"
+    try:
+        msg = _chat_completion([
+            {"role": "system", "content": SUGGESTIONS_SYSTEM},
+            {"role": "user", "content": f"Documents:\n{listing}"},
+        ])
+        raw = (msg.get("content") or "").strip()
+        raw = re.sub(r"^```[a-z]*\s*|\s*```$", "", raw)
+        data = json.loads(raw)
+        out = [str(s).strip() for s in data if str(s).strip()][:4]
+        if len(out) >= 2:
+            return out
+    except Exception:
+        pass
+    return list(SUGGESTIONS_FALLBACK)
+
+
+@app.post("/suggestions")
+async def suggestions(request: Request, authorization: str | None = Header(default=None)):
+    """Starter questions for an empty chat, based on the caller's
+    document titles. Called by the web service; same Khoj token auth
+    as the A2A endpoint. Falls back to static suggestions whenever the
+    model is unavailable or unparseable."""
+    try:
+        require_user(authorization)
+    except Exception:
+        return JSONResponse({"detail": "Unauthorized: valid Khoj token required"}, status_code=401)
+    body = await request.json()
+    documents = body.get("documents") or []
+    if not isinstance(documents, list):
+        documents = []
+    if not OPENAI_API_KEY:
+        return {"suggestions": list(SUGGESTIONS_FALLBACK)}
+    return {"suggestions": _suggestions(documents)}
+
+
 def _rpc_error(req_id, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
 

@@ -123,6 +123,12 @@
   #chatpanel.open { opacity: 1; visibility: visible; pointer-events: auto; }
   #docfile { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
   #chathead { display: flex; align-items: flex-start; justify-content: flex-end; gap: 10px; padding: 14px 18px 10px; }
+  #chatempty { padding: 26px 22px 6px; }
+  .ce-title { font-size: 19px; font-weight: 650; letter-spacing: -.01em; margin-bottom: 6px; }
+  .ce-sub { color: var(--muted-fg); font-size: 13.5px; margin-bottom: 16px; }
+  #suggchips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .suggchip { font: inherit; font-size: 13px; text-align: left; padding: 8px 13px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); color: var(--fg); cursor: pointer; }
+  .suggchip:hover { border-color: var(--accent2); }
   #chathead .t { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
   #chatclose { background: transparent; color: var(--muted-fg); border: 0; box-shadow: none; font-size: 17px; padding: 2px 8px; }
   #chatclose:hover { background: var(--muted); filter: none; }
@@ -446,6 +452,9 @@ async function enterApp() {
   loadDocs();
   loadInvitesInbox();
   loadMe();
+  // Land on the Chat page, with document-based prompt suggestions.
+  $("chatfab").click();
+  showSuggestions();
 }
 
 if (_token) enterApp(); else exitApp();
@@ -861,6 +870,7 @@ async function loadRecentChats() {
 async function openRecentChat(chat, btn) {
   document.querySelectorAll(".recentchat").forEach((x) => x.classList.remove("active"));
   if (btn) btn.classList.add("active");
+  hideSuggestions();
   chatContext = chat.contextId || null;
   $("chatlog").innerHTML = "";
   $("chatpanel").classList.add("open");
@@ -1059,10 +1069,31 @@ function attachSources(sources) {
   answerRow().appendChild(box);
   chatScroll();
 }
+async function showSuggestions() {
+  // Empty-chat starter questions, generated from the user's documents.
+  const box = $("chatempty");
+  box.classList.remove("hidden");
+  const wrap = $("suggchips");
+  wrap.innerHTML = "";
+  try {
+    const r = await fetch("/api/suggestions", { headers: { Authorization: "Bearer " + (await token()) } });
+    if (!r.ok) return;
+    const d = await r.json();
+    for (const s of d.suggestions || []) {
+      const b = document.createElement("button");
+      b.className = "suggchip";
+      b.textContent = s;
+      b.onclick = () => { $("chatinput").value = s; doChat(); };
+      wrap.appendChild(b);
+    }
+  } catch (e) { /* the empty state still shows its heading */ }
+}
+function hideSuggestions() { $("chatempty").classList.add("hidden"); }
 async function doChat() {
   const text = $("chatinput").value.trim();
   if (!text) return;
   $("chaterr").textContent = "";
+  hideSuggestions();
   chatAdd("You", text);
   $("chatinput").value = "";
   $("chatsend").disabled = true;
@@ -1121,7 +1152,7 @@ function showView(name) {
   document.querySelectorAll(".navbtn[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
 }
 document.querySelectorAll(".navbtn[data-view]").forEach((b) => { b.onclick = () => { closeChat(); showView(b.dataset.view); }; });
-$("navchat").onclick = () => { chatContext = null; $("chatlog").innerHTML = ""; document.querySelectorAll(".recentchat").forEach((b) => b.classList.remove("active")); $("chatfab").click(); };
+$("navchat").onclick = () => { chatContext = null; $("chatlog").innerHTML = ""; document.querySelectorAll(".recentchat").forEach((b) => b.classList.remove("active")); $("chatfab").click(); showSuggestions(); };
 
 // --- user chip: clicking the name/avatar opens the admin options menu ---
 $("userchip").onclick = (e) => { e.stopPropagation(); $("usermenu").classList.toggle("hidden"); };
@@ -1166,6 +1197,11 @@ $("chatmic").onclick = () => {
 <aside id="chatpanel" aria-label="Chat">
   <div id="chathead">
     <button id="chatclose" aria-label="Close chat">✕</button>
+  </div>
+  <div id="chatempty" class="hidden">
+    <div class="ce-title">How can I help you today?</div>
+    <div class="ce-sub">Answers are grounded in your documents. Start with a suggestion, or ask anything below.</div>
+    <div id="suggchips"></div>
   </div>
   <div id="chatlog"></div>
   <div id="chatfoot">

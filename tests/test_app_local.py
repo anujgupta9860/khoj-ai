@@ -858,4 +858,51 @@ main.requests.post = _real_post
 if _real_del is not None:
     main.requests.delete = _real_del
 
+# --- /api/suggestions: agent-generated starter questions when the agent
+# answers; static fallbacks when it does not.
+_prev_post_sugg = main.requests.post
+
+
+def sugg_post_ok(url, json=None, files=None, headers=None, timeout=None, **kw):
+    if url.endswith("/suggestions"):
+        sugg_captured["json"] = json
+
+        class R:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return {"suggestions": ["What does the guide say about Wi-Fi?", "Summarize the guide"]}
+
+        return R()
+    return _prev_post_sugg(url, json=json, files=files, headers=headers, timeout=timeout, **kw)
+
+
+sugg_captured = {}
+main.requests.post = sugg_post_ok
+r = client.get("/api/suggestions", headers=H)
+assert r.status_code == 200, r.text
+assert r.json()["suggestions"][0].startswith("What does the guide"), r.json()
+assert isinstance(sugg_captured["json"]["documents"], list), sugg_captured
+
+
+def sugg_post_down(url, json=None, files=None, headers=None, timeout=None, **kw):
+    if url.endswith("/suggestions"):
+        class R:
+            status_code = 502
+            text = "down"
+
+            def json(self):
+                return {}
+
+        return R()
+    return _prev_post_sugg(url, json=json, files=files, headers=headers, timeout=timeout, **kw)
+
+
+main.requests.post = sugg_post_down
+r = client.get("/api/suggestions", headers=H)
+assert r.status_code == 200, r.text
+assert len(r.json()["suggestions"]) >= 2, r.json()
+main.requests.post = _prev_post_sugg
+
 print("ALL LOCAL TESTS PASSED")
