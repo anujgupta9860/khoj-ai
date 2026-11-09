@@ -861,7 +861,7 @@ async function loadRecentChats() {
     box.appendChild(b);
   }
 }
-function openRecentChat(chat, btn) {
+async function openRecentChat(chat, btn) {
   document.querySelectorAll(".recentchat").forEach((x) => x.classList.remove("active"));
   if (btn) btn.classList.add("active");
   chatContext = chat.contextId || null;
@@ -870,9 +870,13 @@ function openRecentChat(chat, btn) {
   $("navchat").classList.add("active");
   document.querySelectorAll(".navbtn[data-view]").forEach((x) => x.classList.remove("active"));
   chatSyncCorpus();
+  let lastUser = "";
   for (const m of chat.messages || []) {
-    if (m.role === "user") chatAdd("You", m.text);
-    else chatAdd("Customer Success Agent", m.text, null, true);
+    if (m.role === "user") { lastUser = m.text; chatAdd("You", m.text); }
+    else {
+      chatAdd("Customer Success Agent", m.text, null, true);
+      await attachTicketButton(lastUser, m.text, null);
+    }
   }
   chatScroll();
   $("chatinput").focus();
