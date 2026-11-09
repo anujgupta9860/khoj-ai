@@ -711,7 +711,7 @@ $("addmember").onclick = async () => {
 };
 
 function mcpConfigJson(tok) {
-  return JSON.stringify({ mcpServers: { opensearch: {
+  return JSON.stringify({ mcpServers: { customersuccessagent: {
     url: location.origin + "/mcp",
     headers: { Authorization: "Bearer " + tok },
   } } }, null, 2);
@@ -835,9 +835,6 @@ function chatAdd(who, body, cls, asMarkdown) {
   chatScroll();
   return div;
 }
-function chatSyncCorpus() {
-  $("chatcorpus").textContent = "Your documents";
-}
 async function loadRecentChats() {
   const box = $("recentchats");
   if (!box) return;
@@ -869,7 +866,6 @@ async function openRecentChat(chat, btn) {
   $("chatpanel").classList.add("open");
   $("navchat").classList.add("active");
   document.querySelectorAll(".navbtn[data-view]").forEach((x) => x.classList.remove("active"));
-  chatSyncCorpus();
   let lastUser = "";
   for (const m of chat.messages || []) {
     if (m.role === "user") { lastUser = m.text; chatAdd("You", m.text); }
@@ -881,7 +877,7 @@ async function openRecentChat(chat, btn) {
   chatScroll();
   $("chatinput").focus();
 }
-$("chatfab").onclick = () => { $("chatpanel").classList.add("open"); $("navchat").classList.add("active"); document.querySelectorAll(".navbtn[data-view]").forEach((b) => b.classList.remove("active")); chatSyncCorpus(); $("chatinput").focus(); };
+$("chatfab").onclick = () => { $("chatpanel").classList.add("open"); $("navchat").classList.add("active"); document.querySelectorAll(".navbtn[data-view]").forEach((b) => b.classList.remove("active")); $("chatinput").focus(); };
 function closeChat() {
   $("chatpanel").classList.remove("open");
   $("navchat").classList.remove("active");
@@ -1143,12 +1139,11 @@ $("chatmic").onclick = () => {
 </script>
 
 <!-- Floating chat widget (A2A agent) -->
-<button id="chatfab" class="hidden" title="Chat with your documents" aria-label="Open chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
-<aside id="chatpanel" aria-label="Chat with your documents">
+<button id="chatfab" class="hidden" title="Chat" aria-label="Open chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
+<aside id="chatpanel" aria-label="Chat">
   <div id="chathead">
     <div>
-      <div class="t">Chat with your documents</div>
-      <div class="muted" id="chatcorpus">Your documents</div>
+      <div class="t">Customer Success Agent</div>
     </div>
     <button id="chatclose" aria-label="Close chat">✕</button>
   </div>
