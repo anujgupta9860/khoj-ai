@@ -65,6 +65,30 @@ spec:
                   # Optional: the pod must start before the GSM secret
                   # exists; the feature simply stays disabled until then.
                   optional: true
+            - name: SALESFORCE_CLIENT_ID
+              value: {{ .Values.salesforce.clientId | quote }}
+            - name: SALESFORCE_USERNAME
+              value: {{ .Values.salesforce.username | quote }}
+            - name: SALESFORCE_LOGIN_URL
+              value: {{ .Values.salesforce.loginUrl | quote }}
+            - name: SALESFORCE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.salesforce.secretName }}
+                  key: SALESFORCE_CLIENT_SECRET
+                  optional: true
+            - name: SALESFORCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.salesforce.secretName }}
+                  key: SALESFORCE_PASSWORD
+                  optional: true
+            - name: SALESFORCE_SECURITY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.salesforce.secretName }}
+                  key: SALESFORCE_SECURITY_TOKEN
+                  optional: true
           volumeMounts:
             - name: data
               mountPath: {{ .Values.data.dir }}

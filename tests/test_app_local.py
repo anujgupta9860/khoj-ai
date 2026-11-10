@@ -767,6 +767,112 @@ for _k in ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN", "JIRA_PROJECT_KEY",
 
 main.requests.post = _real_post
 
+# --- Salesforce case: OAuth login, Case create, CaseNumber lookup -------
+r = client.get("/api/salesforce/status", headers=H)
+assert r.status_code == 200 and r.json() == {"enabled": False}, r.text
+r = client.post("/api/salesforce/ticket", json={"question": "Q?", "answer": "A."}, headers=H)
+assert r.status_code == 501, r.text
+os.environ.update({
+    "SALESFORCE_CLIENT_ID": "cid",
+    "SALESFORCE_CLIENT_SECRET": "csecret",
+    "SALESFORCE_USERNAME": "agent@example.com",
+    "SALESFORCE_PASSWORD": "pw",
+    "SALESFORCE_SECURITY_TOKEN": "tok123",
+})
+sf_captured = {}
+_prev_post_for_sf = main.requests.post
+_prev_get_for_sf = main.requests.get
+
+
+def sf_post(url, json=None, data=None, files=None, headers=None, timeout=None, **kw):
+    if url.endswith("/services/oauth2/token"):
+        sf_captured["token_data"] = data
+
+        class R:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return {"access_token": "sf-token",
+                        "instance_url": "https://org.example.my.salesforce.com"}
+
+        return R()
+    if url.endswith("/sobjects/Case"):
+        sf_captured["case_json"] = json
+        sf_captured["case_headers"] = headers
+
+        class R2:
+            status_code = 201
+            text = ""
+
+            def json(self):
+                return {"id": "500xx000000001AAA", "success": True}
+
+        return R2()
+    if url.endswith("/summarize"):
+        sf_captured["summarize_json"] = json
+
+        class R3:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return {"summary": "VPN drops hourly."}
+
+        return R3()
+    return _prev_post_for_sf(url, json=json, data=data, files=files, headers=headers, timeout=timeout, **kw)
+
+
+def sf_get(url, params=None, headers=None, timeout=None, **kw):
+    if url.endswith("/services/data/v60.0/query"):
+        sf_captured["query_params"] = params
+
+        class R:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return {"records": [{"CaseNumber": "00001234"}]}
+
+        return R()
+    return _prev_get_for_sf(url, params=params, headers=headers, timeout=timeout, **kw)
+
+
+main.requests.post = sf_post
+main.requests.get = sf_get
+r = client.get("/api/salesforce/status", headers=H)
+assert r.status_code == 200 and r.json() == {"enabled": True}, r.text
+r = client.post("/api/salesforce/ticket", json={"question": "What is EXOS?", "answer": "A router OS."}, headers=H)
+assert r.status_code == 200, r.text
+_body = r.json()
+assert _body["key"] == "00001234", _body
+assert _body["url"] == "https://org.example.my.salesforce.com/lightning/r/Case/500xx000000001AAA/view", _body
+_td = sf_captured["token_data"]
+assert _td["grant_type"] == "password" and _td["username"] == "agent@example.com", _td
+assert _td["password"] == "pwtok123", _td  # security token concatenated
+_cj = sf_captured["case_json"]
+assert _cj["Subject"] == "What is EXOS?" and _cj["Status"] == "New" and _cj["Origin"] == "Web", _cj
+assert "Question\nWhat is EXOS?" in _cj["Description"] and "Answer\nA router OS." in _cj["Description"], _cj
+assert sf_captured["case_headers"]["Authorization"] == "Bearer sf-token"
+assert "500xx000000001AAA" in sf_captured["query_params"]["q"]
+# with a transcript the summary + full conversation ride along
+sf_captured.clear()
+r = client.post("/api/salesforce/ticket", json={
+    "question": "Why does my VPN drop?",
+    "answer": "Check the tunnel keepalive.",
+    "transcript": [{"role": "user", "text": "My VPN drops every hour"}],
+}, headers=H)
+assert r.status_code == 200, r.text
+_desc = sf_captured["case_json"]["Description"]
+assert "Conversation summary" in _desc and "VPN drops hourly." in _desc, _desc
+assert "Full conversation" in _desc and "Customer: My VPN drops every hour" in _desc, _desc
+assert sf_captured["summarize_json"]["transcript"][0]["text"].startswith("My VPN"), sf_captured
+main.requests.post = _prev_post_for_sf
+main.requests.get = _prev_get_for_sf
+for _k in ("SALESFORCE_CLIENT_ID", "SALESFORCE_CLIENT_SECRET", "SALESFORCE_USERNAME",
+           "SALESFORCE_PASSWORD", "SALESFORCE_SECURITY_TOKEN"):
+    os.environ.pop(_k, None)
+
 # --- document delete: chunks + original + filter + record all go --------
 del_calls = []
 kf_deleted = []

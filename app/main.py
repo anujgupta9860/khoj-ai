@@ -971,6 +971,169 @@ def jira_ticket(body: JiraTicketBody, authorization: str | None = Header(default
     return {"key": key, "url": url}
 
 
+# --- Salesforce case creation --------------------------------------------------
+# Beside the Jira button, the chat UI offers "Create Salesforce ticket"
+# when a Salesforce org is configured. It creates a Case through the
+# REST API after an OAuth 2.0 password-grant login with a Connected
+# App. Config is env-only; the client secret, password and security
+# token arrive via External Secrets (GSM khoj-salesforce-*). Unconfigured
+# = the status endpoint reports disabled and the UI hides the button.
+
+def _salesforce_config() -> dict | None:
+    client_id = os.environ.get("SALESFORCE_CLIENT_ID", "")
+    client_secret = os.environ.get("SALESFORCE_CLIENT_SECRET", "")
+    username = os.environ.get("SALESFORCE_USERNAME", "")
+    password = os.environ.get("SALESFORCE_PASSWORD", "")
+    if not (client_id and client_secret and username and password):
+        return None
+    return {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "username": username,
+        # The password grant wants password + security token
+        # concatenated when the org requires a token.
+        "password": password + os.environ.get("SALESFORCE_SECURITY_TOKEN", ""),
+        "login_url": os.environ.get(
+            "SALESFORCE_LOGIN_URL", "https://login.salesforce.com"
+        ).rstrip("/"),
+    }
+
+
+def _salesforce_session(cfg: dict) -> tuple:
+    """OAuth password grant -> (access_token, instance_url)."""
+    try:
+        resp = requests.post(
+            cfg["login_url"] + "/services/oauth2/token",
+            data={
+                "grant_type": "password",
+                "client_id": cfg["client_id"],
+                "client_secret": cfg["client_secret"],
+                "username": cfg["username"],
+                "password": cfg["password"],
+            },
+            timeout=20,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Salesforce login failed: {e}")
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Salesforce login returned {resp.status_code}: {resp.text[:300]}",
+        )
+    data = resp.json()
+    return data.get("access_token", ""), (data.get("instance_url") or "").rstrip("/")
+
+
+def _transcript_text(transcript: list) -> str:
+    out = []
+    for turn in transcript[-30:]:
+        if not isinstance(turn, dict):
+            continue
+        text = " ".join(str(turn.get("text") or "").split())[:2000]
+        if not text:
+            continue
+        who = "Customer" if turn.get("role") == "user" else "Assistant"
+        out.append(f"{who}: {text}")
+    return "\n".join(out)
+
+
+@app.get("/api/salesforce/status")
+def salesforce_status(authorization: str | None = Header(default=None)):
+    require_user(authorization)
+    return {"enabled": _salesforce_config() is not None}
+
+
+class SalesforceTicketBody(BaseModel):
+    question: str
+    answer: str
+    orgId: str | None = None
+    # Same escalation payload as the Jira button: the agent summarizes
+    # the conversation into the case and the transcript is appended.
+    transcript: list | None = None
+
+
+@app.post("/api/salesforce/ticket")
+def salesforce_ticket(body: SalesforceTicketBody, authorization: str | None = Header(default=None)):
+    user = require_user(authorization)
+    cfg = _salesforce_config()
+    if not cfg:
+        raise HTTPException(status_code=501, detail="Salesforce is not configured on this deployment")
+    question = body.question.strip()
+    answer = body.answer.strip()
+    if not question or not answer:
+        raise HTTPException(status_code=422, detail="question and answer are required")
+    subject = " ".join(question.split())
+    if len(subject) > 255:
+        subject = subject[:252] + "..."
+    scope = "an organization corpus" if body.orgId else "personal documents"
+    meta = f"Asked by {user.get('email', '')} via Customer Success Agent chat ({scope})."
+    transcript = [t for t in (body.transcript or []) if isinstance(t, dict)]
+    summary_md = _agent_summarize(authorization, transcript) if transcript else None
+    parts = []
+    if summary_md:
+        parts.append("Conversation summary\n" + _CITE_RE.sub("", summary_md).strip())
+    parts.append("Question\n" + _CITE_RE.sub("", question))
+    parts.append("Answer\n" + _CITE_RE.sub("", answer))
+    if summary_md:
+        convo = _transcript_text(transcript)
+        if convo:
+            parts.append("Full conversation\n" + convo)
+    parts.append(meta)
+    description = "\n\n".join(parts)[:30000]
+    token, instance = _salesforce_session(cfg)
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    try:
+        resp = requests.post(
+            instance + "/services/data/v60.0/sobjects/Case",
+            json={
+                "Subject": subject,
+                "Description": description,
+                "Status": "New",
+                "Origin": "Web",
+                "Priority": "Medium",
+            },
+            headers=headers,
+            timeout=20,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Salesforce request failed: {e}")
+    if resp.status_code not in (200, 201):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Salesforce returned {resp.status_code}: {resp.text[:300]}",
+        )
+    case_id = (resp.json() or {}).get("id", "")
+    number = case_id
+    # The create response carries only the record id; fetch the
+    # human-facing CaseNumber for the link label (best-effort).
+    try:
+        q = requests.get(
+            instance + "/services/data/v60.0/query",
+            params={"q": f"SELECT CaseNumber FROM Case WHERE Id = '{case_id}'"},
+            headers=headers,
+            timeout=20,
+        )
+        if q.status_code == 200:
+            records = (q.json() or {}).get("records") or []
+            if records and records[0].get("CaseNumber"):
+                number = records[0]["CaseNumber"]
+    except Exception:
+        pass
+    url = f"{instance}/lightning/r/Case/{case_id}/view" if case_id else instance
+    log_event(
+        kind="salesforce",
+        uid=user["uid"],
+        email=user.get("email", ""),
+        orgId=body.orgId,
+        query=question,
+        summary=f"Salesforce case {number}",
+        results=None,
+        latencyMs=None,
+        source="chat",
+    )
+    return {"key": number, "id": case_id, "url": url}
+
+
 @app.get("/api/documents")
 def documents(orgId: str | None = None, authorization: str | None = Header(default=None)):
     user = require_user(authorization)
