@@ -869,6 +869,23 @@ assert "Full conversation" in _desc and "Customer: My VPN drops every hour" in _
 assert sf_captured["summarize_json"]["transcript"][0]["text"].startswith("My VPN"), sf_captured
 main.requests.post = _prev_post_for_sf
 main.requests.get = _prev_get_for_sf
+# app credentials only (no username/password) -> client credentials grant
+for _k in ("SALESFORCE_USERNAME", "SALESFORCE_PASSWORD", "SALESFORCE_SECURITY_TOKEN"):
+    os.environ.pop(_k, None)
+sf_captured.clear()
+main.requests.post = sf_post
+main.requests.get = sf_get
+r = client.get("/api/salesforce/status", headers=H)
+assert r.status_code == 200 and r.json() == {"enabled": True}, r.text
+r = client.post("/api/salesforce/ticket", json={"question": "CC flow?", "answer": "Yes."}, headers=H)
+assert r.status_code == 200, r.text
+assert r.json()["key"] == "00001234", r.text
+_td = sf_captured["token_data"]
+assert _td["grant_type"] == "client_credentials", _td
+assert "username" not in _td and "password" not in _td, _td
+assert _td["client_id"] == "cid" and _td["client_secret"] == "csecret", _td
+main.requests.post = _prev_post_for_sf
+main.requests.get = _prev_get_for_sf
 for _k in ("SALESFORCE_CLIENT_ID", "SALESFORCE_CLIENT_SECRET", "SALESFORCE_USERNAME",
            "SALESFORCE_PASSWORD", "SALESFORCE_SECURITY_TOKEN"):
     os.environ.pop(_k, None)

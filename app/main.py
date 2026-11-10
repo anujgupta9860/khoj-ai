@@ -974,43 +974,56 @@ def jira_ticket(body: JiraTicketBody, authorization: str | None = Header(default
 # --- Salesforce case creation --------------------------------------------------
 # Beside the Jira button, the chat UI offers "Create Salesforce ticket"
 # when a Salesforce org is configured. It creates a Case through the
-# REST API after an OAuth 2.0 password-grant login with a Connected
-# App. Config is env-only; the client secret, password and security
-# token arrive via External Secrets (GSM khoj-salesforce-*). Unconfigured
+# REST API after an OAuth 2.0 login with a Connected / External Client
+# App: the client-credentials grant when only the app credentials are
+# configured (runs as the app's Run As user; newer orgs lock the
+# username-password flow off), or the password grant when a username
+# and password are also configured. Config is env-only; secrets arrive
+# via External Secrets (GSM khoj-salesforce-*). Unconfigured
 # = the status endpoint reports disabled and the UI hides the button.
 
 def _salesforce_config() -> dict | None:
     client_id = os.environ.get("SALESFORCE_CLIENT_ID", "")
     client_secret = os.environ.get("SALESFORCE_CLIENT_SECRET", "")
+    if not (client_id and client_secret):
+        return None
     username = os.environ.get("SALESFORCE_USERNAME", "")
     password = os.environ.get("SALESFORCE_PASSWORD", "")
-    if not (client_id and client_secret and username and password):
-        return None
-    return {
+    cfg = {
         "client_id": client_id,
         "client_secret": client_secret,
-        "username": username,
-        # The password grant wants password + security token
-        # concatenated when the org requires a token.
-        "password": password + os.environ.get("SALESFORCE_SECURITY_TOKEN", ""),
         "login_url": os.environ.get(
             "SALESFORCE_LOGIN_URL", "https://login.salesforce.com"
         ).rstrip("/"),
+        # App credentials alone -> client credentials grant.
+        "grant": "client_credentials",
     }
+    if username and password:
+        cfg.update({
+            "grant": "password",
+            "username": username,
+            # The password grant wants password + security token
+            # concatenated when the org requires a token.
+            "password": password + os.environ.get("SALESFORCE_SECURITY_TOKEN", ""),
+        })
+    return cfg
 
 
 def _salesforce_session(cfg: dict) -> tuple:
-    """OAuth password grant -> (access_token, instance_url)."""
+    """OAuth login (client credentials or password grant)
+    -> (access_token, instance_url)."""
+    data = {
+        "grant_type": cfg["grant"],
+        "client_id": cfg["client_id"],
+        "client_secret": cfg["client_secret"],
+    }
+    if cfg["grant"] == "password":
+        data["username"] = cfg["username"]
+        data["password"] = cfg["password"]
     try:
         resp = requests.post(
             cfg["login_url"] + "/services/oauth2/token",
-            data={
-                "grant_type": "password",
-                "client_id": cfg["client_id"],
-                "client_secret": cfg["client_secret"],
-                "username": cfg["username"],
-                "password": cfg["password"],
-            },
+            data=data,
             timeout=20,
         )
     except Exception as e:
