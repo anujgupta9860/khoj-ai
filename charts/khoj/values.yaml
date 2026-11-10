@@ -62,19 +62,22 @@ jira:
     refreshInterval: 1h
 
 salesforce:
-  # "Create Salesforce ticket" in chat creates a Case in this org via a
-  # Connected App (OAuth password grant). Empty clientId/username = the
-  # feature stays disabled and the button stays hidden. Secrets never
-  # live in values: the ExternalSecret below syncs them from GSM.
-  clientId: ""                        # Connected App consumer key (not itself a secret)
-  username: ""                        # org user the cases are created as
-  loginUrl: "https://login.salesforce.com"  # test.salesforce.com for sandboxes
+  # "Create Salesforce ticket" in chat creates a Case in this org via an
+  # External Client App. With only the client credentials configured the
+  # app uses the OAuth client-credentials grant (Run As user); setting a
+  # username plus the password/token GSM keys switches it to the
+  # password grant. Empty clientId = the feature stays disabled and the
+  # button stays hidden. Secrets never live in values: the
+  # ExternalSecret below syncs them from GSM.
+  clientId: "3MVG97Tt9.zIfTDssIgMaYtDtYHkjCRMXflXnCIdmr4AyxdNdbUoFdM.gOJYk0QmpM77QsDhEkKAOYUUhicva"  # External Client App consumer key (not itself a secret)
+  username: ""                        # only for the password grant
+  loginUrl: "https://orgfarm-0c0a8f7d86-dev-ed.develop.my.salesforce.com"  # the org's My Domain
   secretName: khoj-salesforce         # k8s Secret the ExternalSecret creates
   externalSecret:
     enabled: true
-    clientSecretGsmKey: khoj-salesforce-client-secret   # GSM secret: Connected App client secret
-    passwordGsmKey: khoj-salesforce-password            # GSM secret: the user's password
-    securityTokenGsmKey: khoj-salesforce-security-token # GSM secret: the user's security token
+    clientSecretGsmKey: khoj-salesforce-client-secret   # GSM secret: the app client secret
+    passwordGsmKey: ""              # GSM secret: password-grant password (empty = not synced)
+    securityTokenGsmKey: ""         # GSM secret: password-grant security token (empty = not synced)
     refreshInterval: 1h
 
 workloadIdentity:
