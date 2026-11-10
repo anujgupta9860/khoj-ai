@@ -123,10 +123,14 @@
   #chatpanel.open { opacity: 1; visibility: visible; pointer-events: auto; }
   #docfile { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
   #chathead { display: flex; align-items: flex-start; justify-content: flex-end; gap: 10px; padding: 14px 18px 10px; }
-  #chatempty { padding: 26px 22px 6px; }
+  /* Empty state fills the space between header and composer and centers
+     its title/subtitle/chips both ways; while it is up the (empty) chat
+     log gives up its flex share so the centering is over the full area. */
+  #chatempty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 26px 22px; }
+  #chatpanel:has(#chatempty:not(.hidden)) #chatlog { flex: 0 0 auto; }
   .ce-title { font-size: 19px; font-weight: 650; letter-spacing: -.01em; margin-bottom: 6px; }
   .ce-sub { color: var(--muted-fg); font-size: 13.5px; margin-bottom: 16px; }
-  #suggchips { display: flex; flex-wrap: wrap; gap: 8px; }
+  #suggchips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 720px; }
   .suggchip { font: inherit; font-size: 13px; text-align: left; padding: 8px 13px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); color: var(--fg); cursor: pointer; }
   .suggchip:hover { border-color: var(--accent2); }
   #chathead .t { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
