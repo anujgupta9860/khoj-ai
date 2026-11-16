@@ -959,6 +959,13 @@ def _jira_norm_name(name) -> str:
     return re.sub(r"\s+", " ", str(name or "")).strip().lower()
 
 
+# Stopgap (hardcoded at the user's request, 2026-11-16): fields a
+# workflow validator demands are invisible to /api/jira/fields
+# because createmeta does not flag them required, so prompt for
+# these by name up front instead of relying on the 409 round-trip.
+_JIRA_FORCE_PROMPT_NAMES = {"program stream"}
+
+
 def _jira_missing_prompts(cfg: dict, resp, sent_fields: dict, meta_by_key: dict) -> list:
     """Resolve the fields a 400 create response demands to prompt
     entries, so the UI can ask for them and retry. Fields already
@@ -1017,7 +1024,10 @@ def jira_fields(authorization: str | None = Header(default=None)):
         covered.add("versions")
     out = []
     for key, meta in fields_meta.items():
-        if key in covered or not meta.get("required"):
+        if key in covered:
+            continue
+        if not meta.get("required") and \
+                _jira_norm_name(meta.get("name")) not in _JIRA_FORCE_PROMPT_NAMES:
             continue
         out.append(_jira_prompt_field(key, meta))
     return {"enabled": True, "fields": out}
@@ -1087,9 +1097,16 @@ def jira_ticket(body: JiraTicketBody, authorization: str | None = Header(default
         kind = _jira_field_kind(k, meta)
         if kind == "user":
             # User fields take an accountId, never a bare name/email.
+            # A value that does not resolve to a Jira user (the form
+            # pre-fills the reporter's Khoj email, which may not be a
+            # Jira account) must not fail the whole create: omit the
+            # field and let Jira default it (reporter -> API user).
             raw = v[0] if isinstance(v, list) and v else v
             if raw is not None and str(raw).strip():
-                fields[k] = {"accountId": _jira_user_account_id(cfg, str(raw).strip())}
+                try:
+                    fields[k] = {"accountId": _jira_user_account_id(cfg, str(raw).strip())}
+                except HTTPException:
+                    pass
             continue
         formatted = _jira_format_value(meta, kind, v)
         if formatted is not None and formatted != "" and formatted != []:

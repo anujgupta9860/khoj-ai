@@ -836,13 +836,15 @@ def jira_post_validator(url, json=None, files=None, headers=None, timeout=None, 
 
 main.requests.get = jira_get2
 main.requests.post = jira_post_validator
-# createmeta flags Severity (option) but NOT Program Stream -> only
-# Severity is prompted up front, with its kind attached
+# createmeta flags Severity (option) but NOT Program Stream; Program
+# Stream is force-prompted by name (the hardcoded stopgap), so both
+# come back up front, each with its kind attached
 r = client.get("/api/jira/fields", headers=H)
 assert r.status_code == 200, r.text
 _got = {f["key"]: f for f in r.json()["fields"]}
-assert set(_got) == {"customfield_10043"}, _got
+assert set(_got) == {"customfield_10042", "customfield_10043"}, _got
 assert _got["customfield_10043"]["kind"] == "option"
+assert _got["customfield_10042"]["kind"] == "cascade"
 # create without Program Stream -> 409 naming the resolved field
 jira_captured.clear()
 r = client.post("/api/jira/ticket", json={"question": "Q?", "answer": "A."}, headers=H)
@@ -877,6 +879,30 @@ assert r.status_code == 200 and r.json()["key"] == "CCS-77", r.text
 _jf = jira_captured["json"]["fields"]
 assert _jf["customfield_10042"] == {"id": "10", "child": {"id": "11"}}, _jf
 assert _jf["customfield_10043"] == {"id": "30"}, _jf
+# an unresolvable user field (reporter email with no Jira account)
+# is omitted instead of failing the create with a 422
+def jira_get_ghost(url, params=None, headers=None, timeout=None, **kw):
+    if "user/search" in url and "ghost" in (params or {}).get("query", ""):
+        class R:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return []
+
+        return R()
+    return jira_get2(url, params=params, headers=headers, timeout=timeout, **kw)
+
+
+main.requests.get = jira_get_ghost
+jira_captured.clear()
+r = client.post("/api/jira/ticket",
+                json={"question": "Q?", "answer": "A.",
+                      "extraFields": {"customfield_10042": "10:11",
+                                      "reporter": "ghost@example.com"}},
+                headers=H)
+assert r.status_code == 200 and r.json()["key"] == "CCS-77", r.text
+assert "reporter" not in jira_captured["json"]["fields"], jira_captured
 main.requests.get = _prev_get2
 main.requests.post = _prev_post2
 for _k in ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN", "JIRA_PROJECT_KEY"):
