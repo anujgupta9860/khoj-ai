@@ -765,6 +765,109 @@ for _k in ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN", "JIRA_PROJECT_KEY",
            "JIRA_COMPONENTS", "JIRA_AFFECTS_VERSIONS"):
     os.environ.pop(_k, None)
 
+# --- Jira: validator-required fields createmeta never flags (a
+# "Program Stream" cascading select demanded only by the Create
+# transition) come back as a 409 so the UI can prompt and retry;
+# option/cascade values are encoded by id, not by name.
+os.environ.update({
+    "JIRA_BASE_URL": "https://sandbox.example.atlassian.net",
+    "JIRA_EMAIL": "u@example.com",
+    "JIRA_API_TOKEN": "tok",
+    "JIRA_PROJECT_KEY": "CCS",
+})
+CREATEMETA2 = {"projects": [{"issuetypes": [{"fields": {
+    "summary": {"required": True, "name": "Summary", "allowedValues": []},
+    "customfield_10042": {
+        "required": False, "name": "Program Stream",
+        "schema": {"type": "option-with-child",
+                   "custom": "com.atlassian.jira.plugin.system.customfieldtypes:cascadingselect"},
+        "allowedValues": [
+            {"id": "10", "value": "Cloud",
+             "children": [{"id": "11", "value": "STHUB"}, {"id": "12", "value": "MAP"}]},
+            {"id": "20", "value": "OnPrem", "children": []},
+        ]},
+    "customfield_10043": {
+        "required": True, "name": "Severity",
+        "schema": {"type": "option"},
+        "allowedValues": [{"id": "30", "value": "High"}, {"id": "31", "value": "Low"}]},
+}}]}]}
+_prev_get2 = main.requests.get
+_prev_post2 = main.requests.post
+
+
+def jira_get2(url, params=None, headers=None, timeout=None, **kw):
+    if "createmeta" in url:
+        class R:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return CREATEMETA2
+
+        return R()
+    return jira_get(url, params=params, headers=headers, timeout=timeout, **kw)
+
+
+def jira_post_validator(url, json=None, files=None, headers=None, timeout=None, **kw):
+    if url.endswith("/rest/api/3/issue"):
+        jira_captured["json"] = json
+        if "customfield_10042" not in (json or {}).get("fields", {}):
+            body = {"errorMessages": ['"Program Stream" shouldn\'t be empty'], "errors": {}}
+
+            class R:
+                status_code = 400
+                text = _json.dumps(body)
+
+                def json(self):
+                    return body
+
+            return R()
+
+        class R:
+            status_code = 201
+            text = ""
+
+            def json(self):
+                return {"key": "CCS-77"}
+
+        return R()
+    return _prev_post2(url, json=json, files=files, headers=headers, timeout=timeout, **kw)
+
+
+main.requests.get = jira_get2
+main.requests.post = jira_post_validator
+# createmeta flags Severity (option) but NOT Program Stream -> only
+# Severity is prompted up front, with its kind attached
+r = client.get("/api/jira/fields", headers=H)
+assert r.status_code == 200, r.text
+_got = {f["key"]: f for f in r.json()["fields"]}
+assert set(_got) == {"customfield_10043"}, _got
+assert _got["customfield_10043"]["kind"] == "option"
+# create without Program Stream -> 409 naming the resolved field
+jira_captured.clear()
+r = client.post("/api/jira/ticket", json={"question": "Q?", "answer": "A."}, headers=H)
+assert r.status_code == 409, r.text
+_missing = r.json()["detail"]["missingFields"]
+assert len(_missing) == 1 and _missing[0]["key"] == "customfield_10042", _missing
+assert _missing[0]["kind"] == "cascade", _missing
+assert _missing[0]["allowedValues"][0]["children"][0]["name"] == "STHUB", _missing
+# retry with the cascade value "parent:child" plus Severity picked by
+# display name -> both land in the payload encoded by id
+jira_captured.clear()
+r = client.post("/api/jira/ticket",
+                json={"question": "Q?", "answer": "A.",
+                      "extraFields": {"customfield_10042": "10:11",
+                                      "customfield_10043": "High"}},
+                headers=H)
+assert r.status_code == 200 and r.json()["key"] == "CCS-77", r.text
+_jf = jira_captured["json"]["fields"]
+assert _jf["customfield_10042"] == {"id": "10", "child": {"id": "11"}}, _jf
+assert _jf["customfield_10043"] == {"id": "30"}, _jf
+main.requests.get = _prev_get2
+main.requests.post = _prev_post2
+for _k in ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN", "JIRA_PROJECT_KEY"):
+    os.environ.pop(_k, None)
+
 main.requests.post = _real_post
 
 # --- Salesforce case: OAuth login, Case create, CaseNumber lookup -------

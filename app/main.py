@@ -816,20 +816,9 @@ def _jira_user_account_id(cfg: dict, query: str) -> str:
     return users[0].get("accountId")
 
 
-@app.get("/api/jira/fields")
-def jira_fields(authorization: str | None = Header(default=None)):
-    """Required create-fields the ticket does NOT already cover.
-
-    Reads the project's create metadata so the UI can prompt the user
-    for exactly what this project demands (Components, Affects
-    versions, ...) instead of the create failing with a 400. Fields
-    Khoj fills itself, and fields covered by config
-    (JIRA_COMPONENTS / JIRA_AFFECTS_VERSIONS), are never returned.
-    """
-    require_user(authorization)
-    cfg = _jira_config()
-    if not cfg:
-        return {"enabled": False, "fields": []}
+def _jira_createmeta_fields(cfg: dict) -> dict:
+    """Create-screen field metadata for the configured project and
+    issue type, keyed by field key. Raises 502 on any Jira failure."""
     try:
         resp = requests.get(
             f"{cfg['base']}/rest/api/3/issue/createmeta",
@@ -850,11 +839,167 @@ def jira_fields(authorization: str | None = Header(default=None)):
             detail=f"Jira returned {resp.status_code}: {resp.text[:300]}",
         )
     projects = (resp.json() or {}).get("projects") or []
-    fields_meta = {}
     if projects:
         types = projects[0].get("issuetypes") or []
         if types:
-            fields_meta = types[0].get("fields") or {}
+            return types[0].get("fields") or {}
+    return {}
+
+
+def _jira_field_kind(key: str, meta: dict) -> str:
+    """How a prompted field's value must be encoded for Jira:
+    "names" (components/versions take [{"name": ...}]), "option"
+    (select fields take {"id": ...}), "cascade" (cascading selects
+    take {"id": parent, "child": {"id": child}}), "user" (accountId),
+    or "text" (the raw value as-is)."""
+    schema = (meta or {}).get("schema") or {}
+    stype = schema.get("type")
+    if key in ("components", "versions") or schema.get("system") in ("components", "versions"):
+        return "names"
+    if key in ("reporter", "assignee") or stype == "user":
+        return "user"
+    if stype == "option-with-child" or "cascadingselect" in (schema.get("custom") or ""):
+        return "cascade"
+    if stype == "option" or (stype == "array" and schema.get("items") == "option"):
+        return "option"
+    return "text"
+
+
+def _jira_prompt_field(key: str, meta: dict) -> dict:
+    """One promptable field for the UI: its kind plus the allowed
+    values (ids, display names, and children for cascading selects)."""
+    def _vals(values):
+        out = []
+        for v in values or []:
+            out.append({
+                "id": str(v.get("id", "")),
+                "name": v.get("name") or v.get("value") or "",
+                "children": _vals(v.get("children")),
+            })
+        return out
+
+    return {
+        "key": key,
+        "name": meta.get("name") or key,
+        "multi": (meta.get("schema") or {}).get("type") == "array",
+        "kind": _jira_field_kind(key, meta),
+        "allowedValues": _vals(meta.get("allowedValues")),
+    }
+
+
+def _jira_format_value(meta: dict, kind: str, raw):
+    """Encode one prompted value the way Jira's create API wants it
+    for this field's schema. Returns None for an empty value."""
+    allowed = (meta or {}).get("allowedValues") or []
+
+    def opt_id(v):
+        v = str(v).strip()
+        for a in allowed:
+            if v and str(a.get("id", "")) == v:
+                return v
+        for a in allowed:
+            if (a.get("name") or a.get("value") or "") == v and a.get("id"):
+                return str(a.get("id"))
+        return None
+
+    if kind == "names":
+        vals = raw if isinstance(raw, list) else [raw]
+        names = [str(x).strip() for x in vals if str(x).strip()]
+        return [{"name": n} for n in names] or None
+    if kind == "option":
+        if isinstance(raw, list):
+            out = []
+            for x in raw:
+                if not str(x).strip():
+                    continue
+                oid = opt_id(x)
+                out.append({"id": oid} if oid else {"value": str(x).strip()})
+            return out or None
+        oid = opt_id(raw)
+        return {"id": oid} if oid else {"value": str(raw).strip()}
+    if kind == "cascade":
+        parent, _, child = str(raw).strip().partition(":")
+        oid = opt_id(parent) or parent
+        out = {"id": oid}
+        if child:
+            cid = None
+            for a in allowed:
+                if str(a.get("id", "")) == oid:
+                    for c in a.get("children") or []:
+                        if str(c.get("id", "")) == child or \
+                                (c.get("name") or c.get("value") or "") == child:
+                            cid = str(c.get("id", ""))
+            out["child"] = {"id": cid or child}
+        return out
+    # text / number / date / labels: the raw value as-is
+    if isinstance(raw, list):
+        vals = [str(x).strip() for x in raw if str(x).strip()]
+        return vals or None
+    return str(raw).strip() or None
+
+
+# A field a workflow validator demands (but createmeta never flagged
+# as required) fails the create with a global error message like
+# "\"Program Stream\" shouldn't be empty" instead of a per-field one.
+_JIRA_MISSING_RES = [
+    re.compile(r'"([^"]+)"\s+shouldn\'t be empty'),
+    re.compile(r'"([^"]+)"\s+is required'),
+    re.compile(r"^(.+?)\s+is required\.?$"),
+    re.compile(r"^(.+?)\s+shouldn\'t be empty\.?$"),
+]
+
+
+def _jira_missing_prompts(cfg: dict, resp, sent_fields: dict, meta_by_key: dict) -> list:
+    """Resolve the fields a 400 create response demands to prompt
+    entries, so the UI can ask for them and retry. Fields already
+    sent are never returned (no prompt loops)."""
+    try:
+        data = resp.json() or {}
+    except Exception:
+        return []
+    if not meta_by_key:
+        try:
+            meta_by_key = _jira_createmeta_fields(cfg)
+        except Exception:
+            return []
+    wanted_keys = set()
+    wanted_names = set()
+    for msg in data.get("errorMessages") or []:
+        for rx in _JIRA_MISSING_RES:
+            m = rx.search(str(msg))
+            if m:
+                wanted_names.add(m.group(1).strip().lower())
+                break
+    for key in (data.get("errors") or {}):
+        if key in meta_by_key:
+            wanted_keys.add(key)
+    out = []
+    for key, meta in meta_by_key.items():
+        if key in sent_fields:
+            continue
+        if key in wanted_keys or (meta.get("name") or "").strip().lower() in wanted_names:
+            out.append(_jira_prompt_field(key, meta))
+    return out
+
+
+@app.get("/api/jira/fields")
+def jira_fields(authorization: str | None = Header(default=None)):
+    """Required create-fields the ticket does NOT already cover.
+
+    Reads the project's create metadata so the UI can prompt the user
+    for exactly what this project demands (Components, Affects
+    versions, ...) instead of the create failing with a 400. Fields
+    Khoj fills itself, and fields covered by config
+    (JIRA_COMPONENTS / JIRA_AFFECTS_VERSIONS), are never returned.
+    Fields a project demands only through a workflow validator are
+    invisible here - those surface on the create call itself and are
+    handed back to the UI as a 409 (see /api/jira/ticket).
+    """
+    require_user(authorization)
+    cfg = _jira_config()
+    if not cfg:
+        return {"enabled": False, "fields": []}
+    fields_meta = _jira_createmeta_fields(cfg)
     covered = {"project", "issuetype", "summary", "description", "attachment"}
     if cfg["components"]:
         covered.add("components")
@@ -864,16 +1009,7 @@ def jira_fields(authorization: str | None = Header(default=None)):
     for key, meta in fields_meta.items():
         if key in covered or not meta.get("required"):
             continue
-        allowed = [
-            {"id": str(v.get("id", "")), "name": v.get("name") or v.get("value") or ""}
-            for v in (meta.get("allowedValues") or [])
-        ]
-        out.append({
-            "key": key,
-            "name": meta.get("name") or key,
-            "multi": (meta.get("schema") or {}).get("type") == "array",
-            "allowedValues": allowed,
-        })
+        out.append(_jira_prompt_field(key, meta))
     return {"enabled": True, "fields": out}
 
 
@@ -918,26 +1054,36 @@ def jira_ticket(body: JiraTicketBody, authorization: str | None = Header(default
         fields["components"] = [{"name": n} for n in cfg["components"]]
     if cfg["versions"]:
         fields["versions"] = [{"name": n} for n in cfg["versions"]]
-    # User-prompted values for any other required fields (see
-    # /api/jira/fields): lists become [{"name": ...}], a single value
-    # becomes {"name": ...}. Core fields can never be overridden.
+    # Create metadata decides how each prompted value must be encoded
+    # (option fields take ids, cascading fields take parent+child ids,
+    # components/versions take names, text takes the raw value).
+    # Best-effort: if createmeta is unreachable, values fall back to
+    # the legacy name wrapping. Core fields can never be overridden.
+    try:
+        meta_by_key = _jira_createmeta_fields(cfg)
+    except Exception:
+        meta_by_key = {}
     for k, v in (body.extraFields or {}).items():
         if k in ("project", "issuetype", "summary", "description"):
             continue
         if not re.fullmatch(r"[a-zA-Z0-9_]+", k or ""):
             continue
-        if k in ("reporter", "assignee"):
+        if isinstance(v, list):
+            if not any(str(x).strip() for x in v):
+                continue
+        elif v is None or not str(v).strip():
+            continue
+        meta = meta_by_key.get(k) or {}
+        kind = _jira_field_kind(k, meta)
+        if kind == "user":
             # User fields take an accountId, never a bare name/email.
             raw = v[0] if isinstance(v, list) and v else v
             if raw is not None and str(raw).strip():
                 fields[k] = {"accountId": _jira_user_account_id(cfg, str(raw).strip())}
             continue
-        if isinstance(v, list):
-            names = [str(x).strip() for x in v if str(x).strip()]
-            if names:
-                fields[k] = [{"name": n} for n in names]
-        elif v is not None and str(v).strip():
-            fields[k] = {"name": str(v).strip()}
+        formatted = _jira_format_value(meta, kind, v)
+        if formatted is not None and formatted != "" and formatted != []:
+            fields[k] = formatted
     payload = {"fields": fields}
     try:
         resp = requests.post(
@@ -950,6 +1096,19 @@ def jira_ticket(body: JiraTicketBody, authorization: str | None = Header(default
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Jira request failed: {e}")
     if resp.status_code not in (200, 201):
+        # A project can demand fields createmeta never flags as
+        # required - a workflow validator on the Create transition
+        # does exactly this (e.g. "\"Program Stream\" shouldn't be
+        # empty"). When the 400 names such fields, resolve them and
+        # hand them back as a 409 so the UI can prompt for them and
+        # retry, instead of dead-ending on the raw error.
+        if resp.status_code == 400:
+            missing = _jira_missing_prompts(cfg, resp, fields, meta_by_key)
+            if missing:
+                raise HTTPException(status_code=409, detail={
+                    "message": "Jira needs more fields for this project",
+                    "missingFields": missing,
+                })
         raise HTTPException(
             status_code=502,
             detail=f"Jira returned {resp.status_code}: {resp.text[:300]}",

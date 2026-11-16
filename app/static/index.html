@@ -965,14 +965,26 @@ function conversationTranscript() {
   });
   return out.slice(-30);
 }
-async function submitJiraTicket(btn, question, answer, orgId, extraFields, onError) {
+async function submitJiraTicket(btn, question, answer, orgId, extraFields, onError, onMissing) {
   try {
     const r = await fetch("/api/jira/ticket", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + (await token()) },
       body: JSON.stringify({ question: question, answer: answer, orgId: orgId, extraFields: extraFields, transcript: conversationTranscript() }),
     });
-    if (!r.ok) throw new Error(await r.text());
+    if (!r.ok) {
+      const text = await r.text();
+      // A 409 means Jira demanded fields the create metadata never
+      // flagged (workflow validators) - the server resolved them, so
+      // hand them to the form for one more prompt round.
+      if (r.status === 409 && onMissing) {
+        try {
+          const missing = (JSON.parse(text).detail || {}).missingFields;
+          if (missing && missing.length) { onMissing(missing); return false; }
+        } catch (e) { /* fall through to the plain error */ }
+      }
+      throw new Error(text);
+    }
     const d = await r.json();
     const a = document.createElement("a");
     a.href = d.url;
@@ -992,31 +1004,82 @@ async function submitJiraTicket(btn, question, answer, orgId, extraFields, onErr
 // Affects versions, ...), prompt for them inline instead of letting
 // the create fail: one dropdown per field (free text when the
 // project lists no allowed values), then a single create call.
-function showJiraForm(row, fields, question, answer, orgId, btn) {
+// Cascading selects get a parent + child dropdown pair. If Jira
+// still rejects the create over a field the metadata never flagged
+// (a workflow validator), the server names it and the form reopens
+// with that field added, keeping everything already entered.
+function showJiraForm(row, fields, question, answer, orgId, btn, preset) {
   const form = document.createElement("div");
   form.className = "jiraform";
   const inputs = {};
+  preset = preset || {};
+  const presetVal = (k) => {
+    const v = preset[k];
+    return Array.isArray(v) ? (v[0] || "") : (v || "");
+  };
   for (const f of fields) {
     const lab = document.createElement("label");
     lab.textContent = f.name + ": ";
-    let inp;
-    if (f.allowedValues && f.allowedValues.length) {
-      inp = document.createElement("select");
+    if (f.kind === "cascade") {
+      const parent = document.createElement("select");
+      const child = document.createElement("select");
       for (const v of f.allowedValues) {
         const o = document.createElement("option");
-        o.value = v.name;
+        o.value = v.id || v.name;
+        o.textContent = v.name;
+        parent.appendChild(o);
+      }
+      const fillChildren = () => {
+        child.innerHTML = "";
+        const p = f.allowedValues.find((v) => (v.id || v.name) === parent.value);
+        const kids = (p && p.children) || [];
+        for (const c of kids) {
+          const o = document.createElement("option");
+          o.value = c.id || c.name;
+          o.textContent = c.name;
+          child.appendChild(o);
+        }
+        child.style.display = kids.length ? "" : "none";
+      };
+      parent.onchange = fillChildren;
+      fillChildren();
+      const pv = presetVal(f.key);
+      if (pv) {
+        const parts = String(pv).split(":");
+        parent.value = parts[0];
+        fillChildren();
+        if (parts[1]) child.value = parts[1];
+      }
+      inputs[f.key] = {
+        multi: false,
+        get: () => (child.style.display !== "none" && child.value)
+          ? parent.value + ":" + child.value : parent.value,
+      };
+      lab.appendChild(parent);
+      lab.appendChild(child);
+    } else if (f.allowedValues && f.allowedValues.length) {
+      const inp = document.createElement("select");
+      for (const v of f.allowedValues) {
+        const o = document.createElement("option");
+        // Option fields submit the value id; name-based fields
+        // (Components, Affects versions) submit the name.
+        o.value = f.kind === "option" ? (v.id || v.name) : v.name;
         o.textContent = v.name;
         inp.appendChild(o);
       }
+      if (presetVal(f.key)) inp.value = presetVal(f.key);
+      inputs[f.key] = { multi: !!f.multi, get: () => inp.value.trim() };
+      lab.appendChild(inp);
     } else {
-      inp = document.createElement("input");
+      const inp = document.createElement("input");
       inp.type = "text";
+      if (presetVal(f.key)) inp.value = presetVal(f.key);
       // Reporter defaults to the signed-in user's email (editable -
       // the server resolves it to a Jira accountId at create time).
-      if (f.key === "reporter" && typeof _email !== "undefined" && _email) inp.value = _email;
+      else if (f.key === "reporter" && typeof _email !== "undefined" && _email) inp.value = _email;
+      inputs[f.key] = { multi: !!f.multi, get: () => inp.value.trim() };
+      lab.appendChild(inp);
     }
-    inputs[f.key] = { el: inp, multi: !!f.multi };
-    lab.appendChild(inp);
     form.appendChild(lab);
   }
   const go = document.createElement("button");
@@ -1029,13 +1092,22 @@ function showJiraForm(row, fields, question, answer, orgId, btn) {
   go.onclick = async () => {
     const extra = {};
     for (const k in inputs) {
-      const val = inputs[k].el.value.trim();
+      const val = inputs[k].get();
       if (val) extra[k] = inputs[k].multi ? [val] : val;
     }
+    // Values from earlier prompt rounds ride along untouched.
+    for (const k in preset) if (!(k in extra)) extra[k] = preset[k];
     go.disabled = true;
     go.textContent = "Creating…";
     const ok = await submitJiraTicket(btn, question, answer, orgId, extra,
-      () => { go.disabled = false; go.textContent = "Create ticket"; });
+      () => { go.disabled = false; go.textContent = "Create ticket"; },
+      (missing) => {
+        form.remove();
+        const merged = fields.slice();
+        for (const mf of missing) if (!merged.some((x) => x.key === mf.key)) merged.push(mf);
+        $("chaterr").textContent = "Jira also needs: " + missing.map((m) => m.name).join(", ");
+        showJiraForm(row, merged, question, answer, orgId, btn, extra);
+      });
     if (ok) form.remove();
   };
   form.appendChild(go);
