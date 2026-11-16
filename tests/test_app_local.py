@@ -851,6 +851,20 @@ _missing = r.json()["detail"]["missingFields"]
 assert len(_missing) == 1 and _missing[0]["key"] == "customfield_10042", _missing
 assert _missing[0]["kind"] == "cascade", _missing
 assert _missing[0]["allowedValues"][0]["children"][0]["name"] == "STHUB", _missing
+# the live sandbox validator's message is sloppier than the textbook
+# one - double space in the name, "eampty" for "empty" - and must
+# still resolve (whitespace-collapsed names, unpinned final word)
+class _TypoResp:
+    status_code = 400
+
+    def json(self):
+        return {"errorMessages": ['"Program  Stream" shouldn\'t be eampty'],
+                "errors": {}}
+
+
+_meta2 = main._jira_createmeta_fields(main._jira_config())
+_out = main._jira_missing_prompts(main._jira_config(), _TypoResp(), {}, _meta2)
+assert [f["key"] for f in _out] == ["customfield_10042"], _out
 # retry with the cascade value "parent:child" plus Severity picked by
 # display name -> both land in the payload encoded by id
 jira_captured.clear()

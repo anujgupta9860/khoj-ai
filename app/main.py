@@ -941,12 +941,22 @@ def _jira_format_value(meta: dict, kind: str, raw):
 # A field a workflow validator demands (but createmeta never flagged
 # as required) fails the create with a global error message like
 # "\"Program Stream\" shouldn't be empty" instead of a per-field one.
+# The message text is admin-configured and cannot be trusted to be
+# exact - the live Calix sandbox validator literally sends
+# "\"Program  Stream\" shouldn't be eampty" (double space, typo'd
+# "empty") - so the patterns accept any final word after "shouldn't
+# be" and field names are matched whitespace-collapsed.
 _JIRA_MISSING_RES = [
-    re.compile(r'"([^"]+)"\s+shouldn\'t be empty'),
+    re.compile(r'"([^"]+)"\s+shouldn\'t be\s+\w+'),
     re.compile(r'"([^"]+)"\s+is required'),
     re.compile(r"^(.+?)\s+is required\.?$"),
-    re.compile(r"^(.+?)\s+shouldn\'t be empty\.?$"),
+    re.compile(r"^(.+?)\s+shouldn\'t be\s+\w+\.?$"),
 ]
+
+
+def _jira_norm_name(name) -> str:
+    """Field-name comparison key: whitespace-collapsed, lowercased."""
+    return re.sub(r"\s+", " ", str(name or "")).strip().lower()
 
 
 def _jira_missing_prompts(cfg: dict, resp, sent_fields: dict, meta_by_key: dict) -> list:
@@ -968,7 +978,7 @@ def _jira_missing_prompts(cfg: dict, resp, sent_fields: dict, meta_by_key: dict)
         for rx in _JIRA_MISSING_RES:
             m = rx.search(str(msg))
             if m:
-                wanted_names.add(m.group(1).strip().lower())
+                wanted_names.add(_jira_norm_name(m.group(1)))
                 break
     for key in (data.get("errors") or {}):
         if key in meta_by_key:
@@ -977,7 +987,7 @@ def _jira_missing_prompts(cfg: dict, resp, sent_fields: dict, meta_by_key: dict)
     for key, meta in meta_by_key.items():
         if key in sent_fields:
             continue
-        if key in wanted_keys or (meta.get("name") or "").strip().lower() in wanted_names:
+        if key in wanted_keys or _jira_norm_name(meta.get("name")) in wanted_names:
             out.append(_jira_prompt_field(key, meta))
     return out
 
